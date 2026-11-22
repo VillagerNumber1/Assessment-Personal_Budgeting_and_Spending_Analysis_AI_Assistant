@@ -20,9 +20,10 @@ HANDOFF.md
 # 考核方发的资料，不属于我们的作品
 资料库/
 
-# 密钥和本地配置
+# 密钥和本地配置（.env.example 是模板，要进仓库）
 .env
 .env.*
+!.env.example
 
 # 编辑器配置
 .vscode/

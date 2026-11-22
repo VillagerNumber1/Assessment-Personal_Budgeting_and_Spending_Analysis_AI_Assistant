@@ -60,3 +60,8 @@ def save_wav(data: np.ndarray, path: Path, samplerate: int = SAMPLE_RATE) -> Non
     """把录音写成 16 位 PCM WAV —— 识别库只认这个格式。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     sf.write(str(path), data, samplerate, subtype="PCM_16")
+
+
+def peak_level(data: np.ndarray) -> int:
+    """录音的最大振幅，int16 范围是 0~32767。用来判断「是不是根本没录到声音」。"""
+    return int(np.abs(data).max()) if data.size else 0
