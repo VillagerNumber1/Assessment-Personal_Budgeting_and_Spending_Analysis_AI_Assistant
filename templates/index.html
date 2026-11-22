@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记账小助手</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --muted:#8a94a6; --accent:#2f7cf6; --red:#e5484d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.6 "Microsoft YaHei","微软雅黑","PingFang SC",system-ui,sans-serif; }
+  main { max-width:680px; margin:0 auto; padding:24px 16px 64px; }
+
+  .topbar { display:flex; align-items:baseline; gap:10px; margin:0 2px 14px; }
+  .topbar h1 { margin:0; font-size:20px; letter-spacing:.5px; }
+  .topbar .tag { font-size:12px; color:var(--muted); }
+
+  .total-card { background:linear-gradient(135deg,#2f7cf6,#5b9bff); color:#fff;
+                border-radius:16px; padding:22px 24px; box-shadow:0 8px 24px rgba(47,124,246,.25); }
+  .total-card .label { opacity:.85; font-size:13px; letter-spacing:.5px; }
+  .total-card .num { font-size:40px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.2; }
+  .total-card .month { opacity:.8; font-size:13px; }
+
+  .entry { display:flex; gap:8px; margin:18px 0 6px; }
+  .entry input { flex:1; padding:12px 14px; border:1px solid #e2e6ee; border-radius:12px;
+                 font-size:15px; background:var(--card); outline:none; min-width:0; }
+  .entry input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(47,124,246,.12); }
+  .entry button { padding:0 18px; border:0; border-radius:12px; background:var(--accent);
+                  color:#fff; font-size:15px; cursor:pointer; white-space:nowrap; }
+  .entry button:disabled { opacity:.6; cursor:default; }
+  .entry .mic { background:#eef2f8; color:#334155; font-size:18px; padding:0 14px; }
+  .entry .mic.rec { background:var(--red); color:#fff; }
+
+  .hint { min-height:22px; font-size:13px; color:var(--muted); padding-left:4px; }
+  .hint b { color:var(--ink); font-weight:600; }
+
+  .recrow { display:flex; align-items:center; gap:10px; margin:0 2px 8px; }
+  .recrow[hidden] { display:none; }
+  .recbar { flex:1; height:6px; background:#e6ebf3; border-radius:999px; overflow:hidden; }
+  .recfill { height:100%; width:0; background:var(--red); border-radius:999px; transition:width .12s linear; }
+  .rectime { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+
+  ul { list-style:none; padding:0; margin:14px 0 0; display:flex; flex-direction:column; gap:8px; }
+  li { background:var(--card); border-radius:12px; padding:12px 16px; box-shadow:0 1px 2px rgba(16,24,40,.05); }
+  .row { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  .cat { font-size:12px; color:var(--accent); background:rgba(47,124,246,.1);
+         padding:2px 8px; border-radius:999px; }
+  .amt { font-weight:700; font-variant-numeric:tabular-nums; color:var(--red); }
+  .row2 { display:flex; justify-content:space-between; gap:12px; margin-top:2px; align-items:center; }
+  .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta { color:var(--muted); font-size:12px; white-space:nowrap; flex:none;
+          display:grid; grid-template-columns:auto 26px; align-items:center; column-gap:10px; }
+  .meta .edit { justify-self:end; }
+  .meta > span { text-align:right; }
+  .caret { display:inline-block; width:12px; font-style:normal; }
+  .edit { border:0; background:none; color:var(--accent); font-size:12px; cursor:pointer; padding:0 4px; }
+  .empty { color:var(--muted); text-align:center; padding:32px 0; }
+
+  .panel { background:var(--card); border-radius:16px; padding:16px 18px; margin-top:14px;
+           box-shadow:0 1px 2px rgba(16,24,40,.05); }
+  .panel h3 { margin:0 0 10px; font-size:13px; color:var(--muted); font-weight:600; letter-spacing:.5px; }
+  .bar-row { display:flex; align-items:center; gap:10px; margin:7px 0; font-size:13px; }
+  .bar-name { width:52px; color:#475569; flex:none; }
+  .bar-track { flex:1; height:8px; background:#eef2f7; border-radius:999px; overflow:hidden; }
+  .bar-fill { display:block; height:100%; background:var(--accent); border-radius:999px; }
+  .bar-val { width:86px; text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; flex:none; }
+  .trend { display:flex; align-items:flex-end; gap:14px; height:84px; justify-content:center; }
+  .trend .col { width:44px; flex:none; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:4px; }
+  .trend .bar { width:100%; background:#c7dbff; border-radius:6px 6px 0 0; }
+  .trend .lbl { font-size:11px; color:var(--muted); }
+  .logs { margin-top:8px; padding-top:8px; border-top:1px dashed #e2e6ee; font-size:12px; color:var(--muted); }
+  .logs[hidden] { display:none; }
+  .logs div { margin:4px 0; }
+  .logs .mark { font-weight:800; margin-right:6px; }
+  .dsl { font-size:12px; color:#94a3b8; margin-top:6px; line-height:1.6; word-break:break-all; }
+  .time-toggle { cursor:pointer; border-bottom:1px dashed #cbd5e1; }
+  .time-toggle:hover { color:var(--accent); border-bottom-color:var(--accent); }
+  .t-long { display:none; }
+  .time-toggle.expanded .t-short { display:none; }
+  .time-toggle.expanded .t-long { display:inline; }
+  .amt-mini { color:#9aa4b2; font-size:11px; margin-left:6px; font-weight:400; }
+
+  .mask { position:fixed; inset:0; background:rgba(15,23,42,.35); display:flex;
+          align-items:center; justify-content:center; padding:16px; }
+  .mask[hidden] { display:none; }
+  .dialog { background:#fff; border-radius:16px; padding:20px; width:100%; max-width:380px; }
+  .dialog h2 { margin:0 0 12px; font-size:16px; }
+  .dialog label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  .dialog input { width:100%; padding:10px 12px; border:1px solid #e2e6ee; border-radius:10px; font-size:15px; }
+  .dialog .err { min-height:18px; margin-top:10px; font-size:13px; color:var(--red); }
+  .dialog .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+  .dialog .actions button { padding:8px 16px; border-radius:10px; border:1px solid #e2e6ee; background:#fff; cursor:pointer; }
+  .dialog .actions .primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .dialog .actions .primary:disabled { background:#cbd5e1; border-color:#cbd5e1; color:#fff; cursor:not-allowed; }
+</style>
+</head>
+<body>
+<main>
+  <header class="topbar">
+    <h1>记账小助手</h1>
+    <span class="tag">一句话记一笔</span>
+  </header>
+
+  <div class="total-card">
+    <div class="label">本月支出</div>
+    <div class="num">¥<span id="total">0.00</span></div>
+    <div class="month" id="month"></div>
+  </div>
+
+  <form class="entry" id="form">
+    <input id="text" placeholder="说一句话，比如「昨天打车32」" autocomplete="off" autofocus>
+    <button id="send" type="submit">记一笔</button>
+    <button id="mic" type="button" class="mic" title="点一下开始录音，再点一下结束">🎤</button>
+  </form>
+  <div class="recrow" id="recrow" hidden>
+    <div class="recbar"><div class="recfill" id="recfill"></div></div>
+    <span class="rectime" id="rectime">0.0 / 60s</span>
+  </div>
+  <div class="hint" id="hint"></div>
+
+  <section class="panel">
+    <h3>问问看</h3>
+    <form class="entry" id="qform" style="margin:0 0 8px">
+      <input id="qtext" placeholder="比如「上个月吃饭花了多少」" autocomplete="off">
+      <button id="qsend" type="submit">问</button>
+    </form>
+    <div class="hint" id="qanswer" style="min-height:20px"></div>
+    <div class="dsl" id="qdsl"></div>
+  </section>
+
+  <section class="panel">
+    <h3>这个月花在哪</h3>
+    <div id="cats"></div>
+    <h3 style="margin:16px 0 6px">近 6 个月</h3>
+    <div class="trend" id="trend"></div>
+  </section>
+
+  <ul id="list"></ul>
+</main>
+
+<div class="mask" id="mask" hidden>
+  <div class="dialog">
+    <h2>编辑这笔账</h2>
+    <label for="editText">做了什么事</label>
+    <input id="editText" autocomplete="off">
+    <label for="editAmount">金额（元）</label>
+    <input id="editAmount" type="number" step="0.01" min="0" inputmode="decimal">
+    <div class="err" id="editErr"></div>
+    <div class="actions">
+      <button type="button" id="editCancel">取消</button>
+      <button type="button" id="editSave" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="mask" id="confirmMask" hidden>
+  <div class="dialog">
+    <h2>金额确认</h2>
+    <p id="confirmMsg" style="margin:0;color:#475569"></p>
+    <div class="actions">
+      <button type="button" id="confirmCancel">取消</button>
+      <button type="button" id="confirmOk" class="primary" disabled>再确认（3）</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const yuan = (c) => (c == null ? "—" : (c / 100).toFixed(2));
+const fullTime = (s) => (s ? s.slice(0, 16) : "");          // 到分
+const fullTimeSec = (s) => (s ? s.slice(0, 19) : "");       // 到秒
+
+/* 编辑记录渲染成一串「版本」：新的在上，最后补上最初的样子 */
+function logLines(t) {
+  const logs = t.logs || [];
+  if (!logs.length) return [];
+  const lines = logs.map((l) => ({
+    at: l.changed_at,
+    text: l.new_text,
+    amount: l.new_amount_cents,
+  }));
+  const first = logs[logs.length - 1];   // logs 倒序，最后一条是最早那次改动
+  lines.push({ at: t.created_at, text: first.old_text, amount: first.old_amount_cents });
+  return lines;
+}
+
+function hint(msg, isError = false) {
+  $("hint").style.color = isError ? "#e5484d" : "";
+  $("hint").innerHTML = msg;
+}
+
+async function loadStats() {
+  const d = await (await fetch("/api/stats")).json();
+
+  const max = Math.max(1, ...d.by_category.map((c) => c.total_cents || 0));
+  $("cats").innerHTML = d.by_category.length
+    ? d.by_category.map((c) => `
+        <div class="bar-row">
+          <span class="bar-name">${esc(c.category)}</span>
+          <span class="bar-track"><span class="bar-fill" style="width:${((c.total_cents || 0) / max * 100).toFixed(1)}%"></span></span>
+          <span class="bar-val">¥${yuan(c.total_cents)}</span>
+        </div>`).join("")
+    : '<div class="empty" style="padding:10px 0">这个月还没有支出</div>';
+
+  const tmax = Math.max(1, ...d.trend.map((t) => t.total_cents || 0));
+  $("trend").innerHTML = d.trend.length
+    ? d.trend.map((t) => `
+        <div class="col" title="¥${yuan(t.total_cents)}">
+          <div class="bar" style="height:${Math.max(2, (t.total_cents || 0) / tmax * 64).toFixed(0)}px"></div>
+          <div class="lbl">${esc(t.month.slice(5))}月</div>
+        </div>`).join("")
+    : '<div class="empty" style="padding:10px 0">还没有数据</div>';
+}
+
+async function load() {
+  const d = await (await fetch("/api/summary")).json();
+  $("total").textContent = d.total_yuan;
+  $("month").textContent = d.month + " · 最近 " + d.recent.length + " 条";
+
+  const list = $("list");
+  if (!d.recent.length) {
+    list.innerHTML = '<div class="empty">还没有记录，上面说一句试试</div>';
+    await loadStats();
+    return;
+  }
+  list.innerHTML = d.recent.map((t) => {
+    const logs = t.logs || [];
+    const stamp = t.updated_at || t.created_at;
+    // 收起时到分，展开时到秒——两段都渲染好，靠 CSS 切换
+    const shortTime = "记录于 " + esc(fullTime(stamp));
+    const longTime = "记录于 " + esc(fullTimeSec(stamp));
+    const timeHtml = `<span class="${logs.length ? "time-toggle" : "time-plain"}"` +
+      (logs.length ? ` data-logs="${t.id}" title="点开看修改记录"` : "") +
+      `><span class="t-short">${shortTime}</span>` +
+      (logs.length ? `<span class="t-long">${longTime}</span>` : "") +
+      `<i class="caret">${logs.length ? "▾" : ""}</i></span>`;
+    const logBox = logs.length ? `
+      <div class="logs" id="logs-${t.id}" hidden>
+        ${logLines(t).map((l, i) => `<div>` +
+          (i === 0 ? '<span class="mark">·</span>' : "") +
+          `${fullTimeSec(l.at)}　${esc(l.text)}` +
+          `<span class="amt-mini">¥${l.amount == null ? "--" : yuan(l.amount)}</span>` +
+          `</div>`).join("")}
+      </div>` : "";
+    return `
+    <li>
+      <div class="row">
+        <span class="cat">${esc(t.category || "未分类")}</span>
+        <span class="amt">¥${yuan(t.amount_cents)}</span>
+      </div>
+      <div class="row2">
+        <span class="txt">${esc(t.text)}</span>
+        <span class="meta">${timeHtml}
+          <button class="edit" data-id="${t.id}" data-text="${esc(t.text)}"
+                  data-amount="${t.amount_cents == null ? "" : t.amount_cents}">编辑</button>
+        </span>
+      </div>
+      ${logBox}
+    </li>`;
+  }).join("");
+
+  await loadStats();
+}
+
+/* 大额二次确认：确认按钮 3 秒倒计时才可点，取消随时能按 */
+function askConfirm(msg) {
+  return new Promise((resolve) => {
+    const mask = $("confirmMask"), ok = $("confirmOk"), cancel = $("confirmCancel");
+    $("confirmMsg").textContent = msg;
+    mask.hidden = false;
+    let left = 3;
+    ok.disabled = true;
+    ok.textContent = `再确认（${left}）`;
+    const timer = setInterval(() => {
+      left -= 1;
+      if (left > 0) { ok.textContent = `再确认（${left}）`; }
+      else { clearInterval(timer); ok.disabled = false; ok.textContent = "确认记这笔"; }
+    }, 1000);
+
+    const finish = (yes) => {
+      clearInterval(timer);
+      mask.hidden = true;
+      ok.onclick = null;
+      cancel.onclick = null;
+      resolve(yes);
+    };
+    ok.onclick = () => finish(true);
+    cancel.onclick = () => finish(false);
+  });
+}
+
+const detailMsg = (d) => (d && typeof d.detail === "object")
+  ? (d.detail.message || "未知错误") : (d.detail || "未知错误");
+const isTooLarge = (d) => !!d && typeof d.detail === "object" && d.detail.code === "amount_too_large";
+
+async function create(text) {
+  let confirmLarge = false;
+  for (;;) {
+    const r = await fetch("/api/transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, confirm_large: confirmLarge }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (isTooLarge(d) && !confirmLarge) {
+        const yes = await askConfirm(`这句话解析出 ${d.detail.amount_yuan} 元，确定要记吗？`);
+        if (yes) { confirmLarge = true; continue; }
+        hint("已取消，没有记这一笔");
+        return null;
+      }
+      hint("存不进：" + detailMsg(d), true);
+      return null;
+    }
+    const p = d.parsed;
+    hint(`理解为：<b>${esc(p.category || "未分类")}</b> · <b>¥${p.amount_yuan}</b> · ${esc(p.occurred_at)}`);
+    await load();
+    return p;
+  }
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("send").disabled = true;
+  try { await create(text); $("text").value = ""; }
+  finally { $("send").disabled = false; $("text").focus(); }
+});
+
+/* ---------- 自然语言查账 ---------- */
+$("qform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("qtext").value.trim();
+  if (!q) return;
+  $("qanswer").style.color = "";
+  $("qanswer").textContent = "查着呢…";
+  $("qdsl").textContent = "";
+  try {
+    const r = await fetch("/api/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      $("qanswer").style.color = "#e5484d";
+      $("qanswer").textContent = "查不了：" + (d.detail || "未知错误");
+      return;
+    }
+    $("qanswer").innerHTML = "<b>" + esc(d.answer) + "</b>";
+    const s = d.dsl;
+    $("qdsl").textContent = "解析为：" + s.label + "（" + s.start + " ~ " + s.end + "）"
+      + " · " + s.metric
+      + (s.categories.length ? " · " + s.categories.join("/") : "")
+      + (s.group_by !== "none" ? " · 按" + s.group_by : "");
+  } catch (err) {
+    $("qanswer").style.color = "#e5484d";
+    $("qanswer").textContent = "请求失败：" + err.message;
+  }
+});
+
+/* ---------- 编辑 ---------- */
+let editingId = null;
+
+$("list").addEventListener("click", (e) => {
+  const logBtn = e.target.closest("[data-logs]");
+  if (logBtn) {                             // 展开 / 收起编辑记录（只读）
+    const box = $("logs-" + logBtn.dataset.logs);
+    if (box) {
+      box.hidden = !box.hidden;
+      logBtn.classList.toggle("expanded", !box.hidden);   // 展开时把时间换成带秒的
+    }
+    return;
+  }
+  const btn = e.target.closest(".edit");
+  if (!btn) return;
+  editingId = Number(btn.dataset.id);
+  $("editText").value = btn.dataset.text;
+  $("editAmount").value = btn.dataset.amount ? (Number(btn.dataset.amount) / 100).toFixed(2) : "";
+  $("mask").hidden = false;
+  $("editText").focus();
+});
+
+function closeEdit() { $("mask").hidden = true; editingId = null; }
+$("editCancel").addEventListener("click", closeEdit);
+
+// 只有「按下」和「松开」都发生在遮罩空白处才关闭。
+// 否则在输入框里按下、拖到外面松开，click 的目标会变成共同的祖先（遮罩），误关弹窗。
+let backdropDown = false;
+$("mask").addEventListener("mousedown", (e) => { backdropDown = e.target === $("mask"); });
+$("mask").addEventListener("click", (e) => {
+  if (e.target === $("mask") && backdropDown) closeEdit();
+  backdropDown = false;
+});
+
+$("editSave").addEventListener("click", async () => {
+  if (editingId == null) return;
+  $("editErr").textContent = "";
+  const text = $("editText").value.trim();
+  const amt = $("editAmount").value.trim();
+  if (!text) { $("editErr").textContent = "「做了什么」不能是空的"; return; }
+  if (amt && !(Number(amt) >= 0)) { $("editErr").textContent = "金额要填数字"; return; }
+  const amount_cents = amt ? Math.round(Number(amt) * 100) : null;
+
+  let confirmLarge = false;
+  for (;;) {
+    const r = await fetch("/api/transactions/" + editingId, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, amount_cents, confirm_large: confirmLarge }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      if (isTooLarge(d) && !confirmLarge) {
+        const yes = await askConfirm(`金额是 ${d.detail.amount_yuan} 元，确定改成这个数吗？`);
+        if (yes) { confirmLarge = true; continue; }
+        $("editErr").textContent = "已取消，没有修改";
+        return;
+      }
+      $("editErr").textContent = detailMsg(d);
+      return;
+    }
+    closeEdit();
+    hint("已保存修改");
+    await load();
+    return;
+  }
+});
+
+/* ---------- 录音 ---------- */
+let audioCtx = null, micStream = null, procNode = null, chunks = [], recording = false, timer = null;
+let recStart = 0, recTick = null;
+
+function updateRec() {
+  const sec = (Date.now() - recStart) / 1000;
+  $("recfill").style.width = Math.min(100, (sec / 60) * 100) + "%";
+  $("rectime").textContent = sec.toFixed(1) + " / 60s";
+}
+
+function encodeWav(samples, sampleRate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  str(36, "data"); view.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    off += 2;
+  }
+  return new Blob([view], { type: "audio/wav" });
+}
+
+/* 音效是支线：有就播，没有就静音继续 */
+const SFX_VOLUME = 0.7;          // 统一音量，想调大调小改这里
+let soundStart = null, soundStop = null, soundSuccess = null, soundFail = null;
+fetch("/api/sounds").then((r) => r.json()).then((d) => {
+  soundStart = d.start || null;
+  soundStop = d.stop || null;
+  soundSuccess = d.success || null;
+  soundFail = d.fail || null;
+}).catch(() => {});
+
+function playOne(url) {
+  if (!url) return;
+  try {
+    const a = new Audio(url);
+    a.volume = SFX_VOLUME;
+    a.play().catch(() => {});
+  } catch (e) {}
+}
+
+function playAndWait(url, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    if (!url) { resolve(); return; }
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      const a = new Audio(url);
+      a.volume = SFX_VOLUME;
+      a.addEventListener("ended", done);
+      a.addEventListener("error", done);      // 文件坏了也别卡住
+      const p = a.play();
+      if (p && p.catch) p.catch(done);         // 浏览器禁止自动播放时
+      setTimeout(done, timeoutMs);             // 兜底：最长等 4 秒
+    } catch (e) {
+      done();
+    }
+  });
+}
+
+async function startRec() {
+  if (soundStart) {
+    hint("准备中…（音效播完就开始录）");
+    await playAndWait(soundStart);            // 播完才开麦，避免把音效录进去
+  }
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioCtx = new AudioContext({ sampleRate: 16000 });
+  const src = audioCtx.createMediaStreamSource(micStream);
+  procNode = audioCtx.createScriptProcessor(4096, 1, 1);
+  chunks = [];
+  recording = true;
+  procNode.onaudioprocess = (e) => {
+    if (recording) chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  };
+  src.connect(procNode);
+  procNode.connect(audioCtx.destination);
+
+  $("mic").classList.add("rec");
+  $("recrow").hidden = false;
+  recStart = Date.now();
+  updateRec();
+  recTick = setInterval(updateRec, 100);
+  hint("● 录音中…再点一下结束（最长 60 秒）");
+  timer = setTimeout(() => stopRec(), 60000);
+}
+
+async function stopRec() {
+  recording = false;
+  clearTimeout(timer);
+  clearInterval(recTick);
+  $("recrow").hidden = true;
+  $("recfill").style.width = "0";
+  $("mic").classList.remove("rec");
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  playOne(soundStop);
+  const rate = audioCtx ? audioCtx.sampleRate : 16000;
+  if (audioCtx) await audioCtx.close();
+  audioCtx = null; micStream = null;
+  if (procNode) { procNode.disconnect(); procNode = null; }
+
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  if (!total) { hint("没录到声音", true); return; }
+  const merged = new Float32Array(total);
+  let o = 0;
+  for (const c of chunks) { merged.set(c, o); o += c.length; }
+  chunks = [];
+
+  hint("识别中…");
+  const form = new FormData();
+  form.append("file", encodeWav(merged, rate), "rec.wav");
+  const r = await fetch("/api/transcribe", { method: "POST", body: form });
+  const d = await r.json();
+  if (!r.ok) { hint("识别失败：" + (d.detail || "未知错误"), true); return; }
+  const text = (d.text || "").trim();
+  if (!text) { playOne(soundFail); hint("没听清，再说一次？", true); return; }
+
+  hint(`听到了：<b>${esc(text)}</b>`);
+  const saved = await create(text);          // 拾音完直接入库
+  playOne(saved ? soundSuccess : soundFail); // 入库成功 / 失败 各一个提示音
+}
+
+$("mic").addEventListener("click", async () => {
+  try {
+    if (recording) { await stopRec(); } else { await startRec(); }
+  } catch (err) {
+    hint("麦克风打不开：" + err.message, true);
+  }
+});
+
+load();
+</script>
+</body>
+</html>

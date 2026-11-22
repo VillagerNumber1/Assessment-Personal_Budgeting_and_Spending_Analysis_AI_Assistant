@@ -22,7 +22,7 @@ MIRRORS = [
 ]
 FILES = ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"]
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
-ROOT = Path(__file__).parent / "models"
+ROOT = Path(__file__).parent.parent / "models"   # 模型统一放项目根目录的 models/
 
 
 def url_of(base: str, repo: str, name: str) -> str:

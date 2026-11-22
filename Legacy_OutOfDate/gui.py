@@ -7,6 +7,12 @@
 
 跑法：python gui.py   或者双击 run.bat
 """
+import sys
+from pathlib import Path
+
+# 本文件已搬进 Legacy_OutOfDate/，但 config.py 还在上一层，先把它加进搜索路径
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import queue
 import threading
 import time

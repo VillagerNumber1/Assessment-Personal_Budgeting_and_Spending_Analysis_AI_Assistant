@@ -1,0 +1,12 @@
+# 网页版专用的精简依赖（不含语音模型那一套，镜像能小一大截）
+#
+# 本地开发用 requirements.txt；这个文件是给 Docker 用的。
+# 想换源：docker build --build-arg PIP_INDEX=https://pypi.org/simple .
+
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.34
+requests==2.34.2
+numpy==2.5.5
+soundfile==0.14.0
+opencc-python-reimplemented==0.1.7

@@ -1,0 +1,33 @@
+# 构建镜像时不该进去的东西
+
+# 虚拟环境（容器里会重新装依赖）
+.venv/
+
+# 模型权重 461 MB：网页版用云端识别，不需要
+models/
+
+# 本地数据：数据库、录音、上传的音频
+data/
+
+# 临时目录和已冻结的桌面版
+temp_trying/
+Legacy_OutOfDate/
+
+# 考核方资料
+资料库/
+
+# 密钥：运行时通过 env_file 注入，绝不进镜像
+.env
+
+# 缓存和版本库
+__pycache__/
+*.pyc
+.git/
+.gitignore
+
+# 文档类（镜像里用不到）
+*.md
+HANDOFF.md
+ROADMAP.txt
+requirements.txt
+requirements.lock.txt

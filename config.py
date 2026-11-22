@@ -68,8 +68,9 @@ SAMPLE_RATE = 16_000     # 录音采样率，也是 ASR 要求的采样率
 MAX_SECONDS = 60         # 一次录音最长多少秒
 MIN_SECONDS = 0.3        # 短于这个就当作误触，不存
 
-# 界面音效：开始录音、结束录音
-SOUND_DIR = BASE_DIR / "audio_effects"
+# 桌面原型已冻结并搬进 Legacy_OutOfDate/，音效跟着一起搬了
+LEGACY_DIR = BASE_DIR / "Legacy_OutOfDate"
+SOUND_DIR = LEGACY_DIR / "audio_effects"
 
 # 识别完成后自动发送；改成 False 就退回「填进输入框，等你按回车确认」
 AUTO_SEND = True

@@ -20,9 +20,12 @@ av==19.0.2
 # 修正 whisper 中文常见的繁体输出（t2s = 繁体转简体）
 opencc-python-reimplemented
 
+# ---- 服务端（网页版）----
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.34
+
 # ---- 后面会用到，先不装 ----
-# fastapi
-# uvicorn[standard]
 # sqlalchemy
 # pydantic-settings
 # jinja2

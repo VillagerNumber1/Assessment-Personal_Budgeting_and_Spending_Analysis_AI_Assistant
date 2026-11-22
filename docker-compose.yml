@@ -1,0 +1,22 @@
+# docker compose up --build    构建并启动
+# docker compose down          停止
+# docker compose logs -f       看日志
+
+services:
+  web:
+    build:
+      context: .
+      args:
+        # 国内默认清华源；境外构建可以设 PIP_INDEX=https://pypi.org/simple
+        PIP_INDEX: ${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    image: bill-assistant:latest
+    container_name: bill-assistant
+    ports:
+      - "8000:8000"
+    # 密钥从 .env 注入容器，不打进镜像
+    env_file:
+      - .env
+    # 数据库和录音活在容器外面：删容器不丢账
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
