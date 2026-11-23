@@ -25,6 +25,16 @@ CATEGORY_WORDS: dict[str, list[str]] = {
 
 RELATIVE_DAYS = {"今天": 0, "昨天": 1, "前天": 2, "大前天": 3}
 
+# 「最近」「上周」这种听得懂但算不出具体哪天的说法：宁可拦下来问一句，也别默默记成今天
+VAGUE_DATE_WORDS = ("最近", "前几天", "前阵子", "前些天", "这几天", "这段时",
+                    "上周", "上上周", "上周末", "月初", "月底", "年中", "年底")
+
+# 收入触发词：命中就是「钱进来了」
+# 没命中一律当支出——记账习惯就是记花了多少，默认成收入反而更容易出错
+INCOME_WORDS = ["工资", "红包", "收入", "进账", "退款", "报销", "奖金", "利息",
+                "分红", "卖了", "收到", "收钱", "转入", "存入", "中奖", "补贴",
+                "稿费", "外快", "返现", "退回", "赚了", "赚到", "挣了", "挣到"]
+
 # 「3个人吃饭一共120」里的 3 不是金额：数字后面跟这些量词就跳过
 COUNTERS = "个人位次张杯份碗瓶"
 
@@ -99,10 +109,23 @@ def find_amount(text: str) -> tuple[int | None, str]:
 
 
 def find_date(text: str, today: date) -> date:
-    for word, offset in RELATIVE_DAYS.items():
+    # 按词长倒序匹配：「大前天」里有「前天」，不先匹配长的就会少算一天
+    for word, offset in sorted(RELATIVE_DAYS.items(), key=lambda kv: -len(kv[0])):
         if word in text:
             return today - timedelta(days=offset)
     return today
+
+
+def find_vague_date(text: str) -> str:
+    """听起来像日期、但规则定不出具体是哪天的词。
+
+    命中就返回那个词，让上层决定要不要拦——「最近」如果默默记成今天，
+    等于替用户编了个日期，比报错更糟。
+    """
+    for word in VAGUE_DATE_WORDS:
+        if word in text:
+            return word
+    return ""
 
 
 def find_category(text: str) -> tuple[str | None, str]:
@@ -113,14 +136,25 @@ def find_category(text: str) -> tuple[str | None, str]:
     return None, ""
 
 
+def find_kind(text: str) -> tuple[str, str]:
+    """判断这笔记的是支出还是收入，返回 (kind, 命中的词)。"""
+    for word in INCOME_WORDS:
+        if word in text:
+            return "income", word
+    return "expense", ""
+
+
 def parse(text: str, today: date | None = None) -> dict:
     """一句话 -> 一条草稿。"""
     today = today or date.today()
     amount, amount_hit = find_amount(text)
     category, category_hit = find_category(text)
+    kind, kind_hit = find_kind(text)
     return {
         "amount_cents": amount,
         "occurred_at": find_date(text, today).isoformat(),
         "category": category,
-        "hits": {"amount": amount_hit, "category": category_hit},
+        "kind": kind,
+        "vague_date": find_vague_date(text),
+        "hits": {"amount": amount_hit, "category": category_hit, "kind": kind_hit},
     }

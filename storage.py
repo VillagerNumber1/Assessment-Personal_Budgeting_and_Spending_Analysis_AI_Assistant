@@ -19,13 +19,18 @@ from config import DATA_DIR
 # 默认用 data/app.db；测试时可以用环境变量指到别处，别弄脏真数据
 DB_PATH = Path(os.environ.get("BILL_DB", str(DATA_DIR / "app.db")))
 
+# 账目方向：只有这两种。金额永远存正数，方向靠这个字段区分
+KINDS = ("expense", "income")
+KIND_LABEL = {"expense": "支出", "income": "收入"}
+
 SCHEMA = """
 create table if not exists transactions (
     id          integer primary key autoincrement,
     text        text    not null,              -- 用户原话
     amount_cents integer,                      -- 金额（分），整数避免浮点误差
-    occurred_at text    not null,              -- 消费日期 YYYY-MM-DD
+    occurred_at text    not null,              -- 记账日期 YYYY-MM-DD
     category    text,                          -- 类别，可空
+    kind        text    not null default 'expense',  -- expense 支出 / income 收入
     status      text    not null default 'confirmed',  -- draft / confirmed
     created_at  text    not null default (datetime('now', 'localtime')),
     updated_at  text,                                   -- 只在用户编辑过之后才有值
@@ -48,6 +53,15 @@ create table if not exists operations (
 
 create index if not exists idx_op_tx on operations(tx_id);
 create index if not exists idx_op_time on operations(created_at);
+
+-- 查账历史：用户问过什么。只记问题，不记答案（答案每次现算，免得拿旧数字）
+create table if not exists queries (
+    id          integer primary key autoincrement,
+    question    text    not null,
+    created_at  text    not null default (datetime('now', 'localtime'))
+);
+
+create index if not exists idx_q_time on queries(created_at);
 """
 
 
@@ -66,6 +80,10 @@ def _migrate(con: sqlite3.Connection) -> None:
         con.execute("alter table transactions add column updated_at text")
     if "deleted_at" not in cols:
         con.execute("alter table transactions add column deleted_at text")
+    if "kind" not in cols:
+        # 老库全是记账（支出），默认值正好把历史数据都标成 expense
+        con.execute(
+            "alter table transactions add column kind text not null default 'expense'")
 
 
 def _snapshot(con: sqlite3.Connection, tx_id: int) -> dict | None:
@@ -101,14 +119,17 @@ def add(text: str,
         amount_cents: int | None = None,
         occurred_at: str | None = None,
         category: str | None = None,
-        status: str = "confirmed") -> int:
-    """存一条账，返回它的 id。日期不传就记今天。"""
+        status: str = "confirmed",
+        kind: str = "expense") -> int:
+    """存一条账，返回它的 id。日期不传就记今天；kind 不传就是支出。"""
     con = _connect()
     try:
         cur = con.execute(
-            "insert into transactions (text, amount_cents, occurred_at, category, status)"
-            " values (?, ?, ?, ?, ?)",
-            (text, amount_cents, occurred_at or date.today().isoformat(), category, status),
+            "insert into transactions"
+            " (text, amount_cents, occurred_at, category, kind, status)"
+            " values (?, ?, ?, ?, ?, ?)",
+            (text, amount_cents, occurred_at or date.today().isoformat(),
+             category, kind if kind in KINDS else "expense", status),
         )
         new_id = int(cur.lastrowid)
         _log(con, "create", new_id, None, _snapshot(con, new_id))
@@ -129,9 +150,11 @@ def get(tx_id: int) -> dict | None:
 
 
 def update(tx_id: int, text: str, amount_cents: int | None,
-           category: str | None = None) -> bool:
-    """改一条账（做了什么 + 金额）。
+           category: str | None = None, kind: str | None = None,
+           occurred_at: str | None = None) -> bool:
+    """改一条账（做了什么 + 金额 + 方向 + 时间）。
 
+    kind 传 None 表示「不改方向」，保留原来的；occurred_at 同理。
     updated_at 由服务端写，用户改过才有值——这就是「修改时间只在编辑后出现」。
     返回 False 表示这条不存在。
     """
@@ -140,10 +163,12 @@ def update(tx_id: int, text: str, amount_cents: int | None,
         old = con.execute("select * from transactions where id = ?", (tx_id,)).fetchone()
         if old is None:
             return False
+        new_kind = kind if kind in KINDS else old["kind"]
+        new_when = occurred_at or old["occurred_at"]
         con.execute(
-            "update transactions set text = ?, amount_cents = ?, category = ?,"
-            " updated_at = datetime('now', 'localtime') where id = ?",
-            (text, amount_cents, category, tx_id),
+            "update transactions set text = ?, amount_cents = ?, category = ?, kind = ?,"
+            " occurred_at = ?, updated_at = datetime('now', 'localtime') where id = ?",
+            (text, amount_cents, category, new_kind, new_when, tx_id),
         )
         # 改之前和改之后都留一份，撤销时能精确还原
         _log(con, "edit", tx_id, dict(old), _snapshot(con, tx_id))
@@ -309,8 +334,43 @@ def query(sql: str, params: tuple = ()) -> list[dict]:
         con.close()
 
 
+def add_query(question: str) -> int:
+    """记一条查账历史。只留问题，不存答案。"""
+    con = _connect()
+    try:
+        cur = con.execute("insert into queries (question) values (?)", (question,))
+        con.commit()
+        return int(cur.lastrowid)
+    finally:
+        con.close()
+
+
+def queries(limit: int = 60) -> list[dict]:
+    """最近的查账历史，新的在上面。"""
+    con = _connect()
+    try:
+        rows = con.execute(
+            "select * from queries order by id desc limit ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+def delete_query(query_id: int) -> bool:
+    con = _connect()
+    try:
+        cur = con.execute("delete from queries where id = ?", (query_id,))
+        con.commit()
+        return cur.rowcount > 0
+    finally:
+        con.close()
+
+
 def stats(year_month: str | None = None) -> dict:
-    """分类聚合 + 近 6 个月趋势，都只算 confirmed。"""
+    """某个月的分类聚合 + 近 6 个月趋势 + 支出 / 收入 / 结余。
+
+    分类横条和趋势只算**支出**：那是在回答「钱花在哪」，收入没有「花在哪」这回事。
+    """
     ym = year_month or date.today().strftime("%Y-%m")
     con = _connect()
     try:
@@ -318,18 +378,34 @@ def stats(year_month: str | None = None) -> dict:
             "select coalesce(category, '未分类') as category,"
             " sum(amount_cents) as total_cents, count(*) as count"
             " from transactions where status = 'confirmed' and deleted_at is null"
-            " and occurred_at like ?"
+            " and kind = 'expense' and occurred_at like ?"
             " group by category order by total_cents desc",
             (f"{ym}%",),
         ).fetchall()
+        sums = con.execute(
+            "select kind, coalesce(sum(amount_cents), 0) as total_cents,"
+            " count(*) as count from transactions"
+            " where status = 'confirmed' and deleted_at is null and occurred_at like ?"
+            " group by kind", (f"{ym}%",)).fetchall()
         trend = con.execute(
-            "select substr(occurred_at, 1, 7) as month, sum(amount_cents) as total_cents"
+            "select substr(occurred_at, 1, 7) as month,"
+            " sum(case when kind = 'expense' then amount_cents else 0 end) as total_cents,"
+            " sum(case when kind = 'expense' then amount_cents else 0 end) as expense_cents,"
+            " sum(case when kind = 'income' then amount_cents else 0 end) as income_cents"
             " from transactions where status = 'confirmed' and deleted_at is null"
             " group by month order by month desc limit 6"
         ).fetchall()
+
+        by_kind = {r["kind"]: r["total_cents"] for r in sums}
+        expense = by_kind.get("expense", 0)
+        income = by_kind.get("income", 0)
         return {
             "month": ym,
-            "total_cents": sum(r["total_cents"] or 0 for r in cats),
+            # total_cents 保留给老代码：它就是「本月支出」
+            "total_cents": expense,
+            "expense_cents": expense,
+            "income_cents": income,
+            "balance_cents": income - expense,
             "by_category": [dict(r) for r in cats],
             "trend": [dict(r) for r in reversed(trend)],
         }
@@ -337,15 +413,16 @@ def stats(year_month: str | None = None) -> dict:
         con.close()
 
 
-def month_total(year_month: str | None = None) -> int:
-    """某个月的支出总额（分）。不传就是本月。只统计 confirmed。"""
+def month_total(year_month: str | None = None, kind: str = "expense") -> int:
+    """某个月的总额（分），按方向算。不传就是本月支出。只统计 confirmed。"""
     ym = year_month or date.today().strftime("%Y-%m")
     con = _connect()
     try:
         row = con.execute(
             "select coalesce(sum(amount_cents), 0) as total from transactions"
-            " where status = 'confirmed' and deleted_at is null and occurred_at like ?",
-            (f"{ym}%",),
+            " where status = 'confirmed' and deleted_at is null"
+            " and kind = ? and occurred_at like ?",
+            (kind if kind in KINDS else "expense", f"{ym}%"),
         ).fetchone()
         return int(row["total"])
     finally:
