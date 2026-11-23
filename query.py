@@ -111,7 +111,9 @@ def parse_question(q: str, today: date | None = None) -> dict:
 
 def run(dsl: dict) -> list[dict]:
     """按 DSL 查库。SQL 全部由代码拼，参数绑定，用户输入不进 SQL。"""
-    where = ["status = 'confirmed'", "occurred_at between ? and ?"]
+    # deleted_at is null 这条不能少：删掉的账还留在表里，漏了就会算进查账结果
+    where = ["status = 'confirmed'", "deleted_at is null",
+             "occurred_at between ? and ?"]
     params: list = [dsl["start"], dsl["end"]]
 
     if dsl["categories"]:
