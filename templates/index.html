@@ -73,6 +73,49 @@
   .logs div { margin:4px 0; }
   .logs .mark { font-weight:800; margin-right:6px; }
   .dsl { font-size:12px; color:#94a3b8; margin-top:6px; line-height:1.6; word-break:break-all; }
+
+  /* 右下角设置入口 */
+  .fab { position:fixed; right:22px; bottom:22px; z-index:50;
+         display:flex; flex-direction:column; align-items:center; gap:2px;
+         width:64px; padding:8px 0 6px; border:1px solid #e2e6ee; border-radius:14px;
+         background:var(--card); color:#64748b; cursor:pointer; font-size:11px;
+         box-shadow:0 6px 18px rgba(16,24,40,.12); }
+  .fab:hover { color:var(--accent); border-color:#c7dbff; }
+
+  /* 设置面板 */
+  .tip { color:#e5397f; font-size:12px; margin:2px 0 0; }
+  .seg { display:flex; background:#eef2f8; border-radius:12px; padding:4px; margin:12px 0 14px; }
+  .seg button { flex:1; border:0; background:transparent; padding:8px 0; border-radius:9px;
+                font-size:14px; color:#64748b; cursor:pointer; }
+  .seg button.on { background:#fff; color:var(--accent); font-weight:600;
+                   box-shadow:0 1px 3px rgba(16,24,40,.12); }
+  .sect h3 { margin:14px 0 6px; font-size:13px; color:#334155; }
+  .sect .muted { color:#9aa4b2; font-size:13px; margin:2px 0; }
+  .feat { list-style:none; padding:0; margin:6px 0 0; }
+  .feat li { display:flex; justify-content:space-between; align-items:center;
+             padding:7px 0; border-bottom:1px dashed #eef2f7; font-size:13px; }
+  .feat li:last-child { border-bottom:0; }
+  .feat em { font-style:normal; font-size:12px; color:#16a34a; }
+  .feat em.off { color:#9aa4b2; }
+  .feat em.warn { color:#f59e0b; }
+  .field { display:block; font-size:12px; color:#64748b; margin:10px 0 4px; }
+  .keyrow { display:flex; gap:8px; }
+  .keyrow input { flex:1; min-width:0; padding:7px 10px; border:1px solid #e2e6ee;
+                  border-radius:10px; font-size:12px; color:#8a94a6;
+                  font-family:"Microsoft YaHei","微软雅黑",sans-serif; }
+  .keyrow button { padding:0 14px; border:1px solid #e2e6ee; background:#fff;
+                   border-radius:10px; cursor:pointer; color:var(--accent); }
+  .keyhint { font-size:12px; margin:6px 0 0; color:#9aa4b2; }
+  .keyhint.ok { color:#16a34a; }
+
+  /* 顶部提示条：从上方滑下来 */
+  .toast { position:fixed; left:50%; top:0; z-index:200;
+           transform:translate(-50%, -120%);
+           padding:10px 20px; border-radius:0 0 12px 12px;
+           background:#16a34a; color:#fff; font-size:13px; white-space:nowrap;
+           box-shadow:0 6px 18px rgba(16,24,40,.18);
+           transition:transform .26s ease; }
+  .toast.show { transform:translate(-50%, 0); }
   .time-toggle { cursor:pointer; border-bottom:1px dashed #cbd5e1; }
   .time-toggle:hover { color:var(--accent); border-bottom-color:var(--accent); }
   .t-long { display:none; }
@@ -153,6 +196,55 @@
   </div>
 </div>
 
+<button class="fab" id="settingsBtn" title="设置">
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+       stroke-width="1.7" stroke-linecap="round">
+    <circle cx="9.5" cy="9.5" r="2.6"/>
+    <path d="M9.5 3.6v1.6M9.5 13.8v1.6M3.6 9.5h1.6M13.8 9.5h1.6M5.3 5.3l1.2 1.2M12.5 12.5l1.2 1.2M13.7 5.3l-1.2 1.2M6.5 12.5l-1.2 1.2"/>
+    <circle cx="17.2" cy="17.2" r="1.9"/>
+    <path d="M17.2 13.5v1.1M17.2 19.8v1.1M13.5 17.2h1.1M19.8 17.2h1.1"/>
+  </svg>
+  <span>设置</span>
+</button>
+
+<div class="mask" id="settingsMask" hidden>
+  <div class="dialog">
+    <h2>设置</h2>
+    <p class="tip" id="tipAdvice">*建议使用云端模型以取得最佳效果</p>
+
+    <div class="seg" id="asrSeg">
+      <button type="button" data-v="local">本地模型</button>
+      <button type="button" data-v="cloud">云端模型</button>
+    </div>
+
+    <div class="sect" id="sectLocal" hidden>
+      <h3>① 本地模型</h3>
+      <p class="muted">orz... 正在施工中</p>
+    </div>
+
+    <div class="sect" id="sectCloud" hidden>
+      <h3>② 云端模型（目前只支持 DeepSeek）</h3>
+      <label class="field" for="keyInput">API Key（三个云端功能共用）</label>
+      <div class="keyrow">
+        <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off">
+        <button type="button" id="keySave">保存</button>
+      </div>
+      <p class="keyhint" id="keyHint">未配置</p>
+      <ul class="feat">
+        <li><span>LLM 自然语言识别</span><em id="llmState">规则版</em></li>
+        <li><span>OCR 图像识别</span><em class="off">未接入</em></li>
+        <li><span>语音识别</span><em id="asrState">—</em></li>
+      </ul>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="settingsClose" class="primary">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
 <div class="mask" id="confirmMask" hidden>
   <div class="dialog">
     <h2>金额确认</h2>
@@ -189,6 +281,21 @@ function logLines(t) {
 function hint(msg, isError = false) {
   $("hint").style.color = isError ? "#e5484d" : "";
   $("hint").innerHTML = msg;
+}
+
+/* 顶部提示条：从上方滑下来，2 秒后自动收回去 */
+let toastTimer = null;
+function toast(msg, ok = true) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.style.background = ok ? "#16a34a" : "#e5484d";
+  el.hidden = false;
+  requestAnimationFrame(() => el.classList.add("show"));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => { el.hidden = true; }, 300);
+  }, 2200);
 }
 
 async function loadStats() {
@@ -313,6 +420,13 @@ async function create(text) {
       }
       hint("存不进：" + detailMsg(d), true);
       return null;
+    }
+    if (d.multi) {                     // 一句话拆成了好几笔
+      const parts = d.items.map((it) =>
+        `${esc(it.parsed.category || "未分类")} ¥${it.parsed.amount_yuan}`);
+      hint(`记了 ${d.items.length} 笔：` + parts.join("　·　"));
+      await load();
+      return d.items[0].parsed;
     }
     const p = d.parsed;
     hint(`理解为：<b>${esc(p.category || "未分类")}</b> · <b>¥${p.amount_yuan}</b> · ${esc(p.occurred_at)}`);
@@ -565,6 +679,104 @@ $("mic").addEventListener("click", async () => {
   }
 });
 
+/* ---------- 设置 ---------- */
+let asrSetting = "auto";
+let hasKeyCache = false;
+let keyHintCache = "";
+
+function paintSettings(hasKey) {
+  if (hasKey !== undefined) hasKeyCache = !!hasKey;
+  const isCloud = asrSetting === "cloud" || (asrSetting === "auto" && hasKeyCache);
+
+  document.querySelectorAll("#asrSeg button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.v === (isCloud ? "cloud" : "local"));
+  });
+  $("sectLocal").hidden = isCloud;
+  $("sectCloud").hidden = !isCloud;
+  $("tipAdvice").hidden = isCloud;      // 已经在云端了，这条建议就没必要占地方
+
+  const st = $("asrState");
+  st.textContent = hasKeyCache ? "DeepSeek 云端" : "缺少 API Key";
+  st.className = hasKeyCache ? "" : "warn";
+
+  const ls = $("llmState");
+  ls.textContent = hasKeyCache ? "规则 + 云端兜底" : "规则版";
+  ls.className = hasKeyCache ? "" : "off";
+
+  const kh = $("keyHint");
+  kh.textContent = hasKeyCache ? "已配置 API Key" : "未配置";
+  kh.className = hasKeyCache ? "keyhint ok" : "keyhint";
+}
+
+async function loadSettings() {
+  try {
+    const d = await (await fetch("/api/settings")).json();
+    asrSetting = d.asr_backend || "auto";
+    keyHintCache = d.key_hint || "";
+    paintSettings(d.has_key);
+  } catch (e) {
+    paintSettings(false);
+  }
+}
+
+$("settingsBtn").addEventListener("click", () => {
+  $("settingsMask").hidden = false;
+  loadSettings();
+});
+$("settingsClose").addEventListener("click", () => { $("settingsMask").hidden = true; });
+
+let settingsDown = false;
+$("settingsMask").addEventListener("mousedown", (e) => { settingsDown = e.target === $("settingsMask"); });
+$("settingsMask").addEventListener("click", (e) => {
+  if (e.target === $("settingsMask") && settingsDown) $("settingsMask").hidden = true;
+  settingsDown = false;
+});
+
+$("asrSeg").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-v]");
+  if (!btn) return;
+  asrSetting = btn.dataset.v;
+  paintSettings();                       // 先切界面，不等网络
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asr_backend: asrSetting }),
+    });
+    const d = await r.json();
+    if (r.ok) { asrSetting = d.asr_backend; paintSettings(d.has_key); }
+  } catch (err) {}
+});
+
+$("keySave").addEventListener("click", async () => {
+  const value = $("keyInput").value.trim();
+  if (!value) { $("keyHint").textContent = "先把 key 粘进来"; return; }
+  $("keySave").disabled = true;
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: value }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      $("keyHint").textContent = "保存失败：" + (d.detail || "未知错误");
+      return;
+    }
+    $("keyInput").value = "";             // 存完就清掉，界面上永远看不到明文
+    asrSetting = d.asr_backend;
+    keyHintCache = d.key_hint || "";
+    paintSettings(d.has_key);
+    $("settingsMask").hidden = true;      // 存好就关窗
+    toast("API key 已配置");
+  } catch (err) {
+    $("keyHint").textContent = "保存失败：" + err.message;
+  } finally {
+    $("keySave").disabled = false;
+  }
+});
+
+loadSettings();
 load();
 </script>
 </body>
