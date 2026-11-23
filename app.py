@@ -77,6 +77,8 @@ class QueryRequest(BaseModel):
 class SettingsBody(BaseModel):
     asr_backend: str | None = None
     api_key: str | None = None          # 传空字符串 = 清空；不传 = 不改
+    live2d: bool | None = None
+    theme: str | None = None
 
 
 _transcriber = None
@@ -155,8 +157,14 @@ def write_settings(body: SettingsBody) -> dict:
         raise HTTPException(status_code=400, detail="asr_backend 只能是 local / cloud / auto")
     if body.api_key is not None and len(body.api_key) > 200:
         raise HTTPException(status_code=400, detail="key 太长了")
+    if body.theme not in (None, "light", "dark", "auto"):
+        raise HTTPException(status_code=400, detail="theme 只能是 light / dark / auto")
 
-    updates: dict = {"asr_backend": body.asr_backend}
+    updates: dict = {
+        "asr_backend": body.asr_backend,
+        "live2d": body.live2d,
+        "theme": body.theme,
+    }
     if body.api_key is not None:
         updates["api_key"] = body.api_key.strip()
     runtime.save(updates)
@@ -203,9 +211,16 @@ def summary() -> dict:
 
 
 @app.get("/api/transactions")
-def list_transactions(limit: int = 50) -> list[dict]:
-    """流水列表。limit 是网址参数：/api/transactions?limit=5"""
-    return storage.list_recent(limit)
+def list_transactions(limit: int = 10, offset: int = 0) -> dict:
+    """流水列表，支持翻页。limit 是每页条数，offset 是跳过多少条。"""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    return {
+        "items": storage.list_recent(limit, offset),
+        "total": storage.count_transactions(),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
@@ -279,6 +294,11 @@ def create_transaction(tx: NewTransaction) -> dict:
 
     # 拆不开，或者拆出来一笔带金额的都没有 —— 按整句存一条
     item = _resolve(tx.text, tx, budget)
+    # 连金额都没解析出来就别存：null 金额会进统计的 count(*)，留着纯属脏数据
+    if item["amount"] is None:
+        raise HTTPException(
+            status_code=400,
+            detail="没听出金额，说具体一点，比如「午饭 32」")
     check_amount(item["amount"], tx.confirm_large)
     try:
         new_id = storage.add(item["text"], item["amount"], item["occurred"], item["category"])
@@ -305,11 +325,51 @@ def edit_transaction(tx_id: int, body: EditTransaction) -> dict:
     if old is None:
         raise HTTPException(status_code=404, detail="这条账不存在")
 
+    if body.amount_cents is None:
+        raise HTTPException(status_code=400, detail="金额不能为空")
     check_amount(body.amount_cents, body.confirm_large)
     category = parser.parse(text)["category"] or old["category"]
 
     storage.update(tx_id, text, body.amount_cents, category)
     return {"ok": True, "item": storage.get(tx_id)}
+
+
+@app.delete("/api/transactions/{tx_id}")
+def delete_transaction(tx_id: int) -> dict:
+    """删除一条账（软删除，可撤销）。"""
+    if not storage.delete(tx_id):
+        raise HTTPException(status_code=404, detail="这条账不存在，或者已经删了")
+    return {"ok": True}
+
+
+@app.post("/api/transactions/{tx_id}/restore")
+def restore_transaction(tx_id: int) -> dict:
+    """恢复一条被删的账。"""
+    if not storage.restore(tx_id):
+        raise HTTPException(status_code=404, detail="这条账不存在，或者本来就没删")
+    return {"ok": True}
+
+
+@app.get("/api/operations")
+def list_operations(limit: int = 100) -> list[dict]:
+    """操作历史：增 / 改 / 删 / 恢复，最新在上面。"""
+    return storage.operations(limit)
+
+
+@app.post("/api/operations/{op_id}/undo")
+def undo_operation(op_id: int) -> dict:
+    """撤销一条操作（新增↔删除、编辑↔还原）。"""
+    if not storage.undo(op_id):
+        raise HTTPException(status_code=404, detail="这条操作不存在，或者已经撤销过")
+    return {"ok": True}
+
+
+@app.delete("/api/operations/{op_id}")
+def delete_operation(op_id: int) -> dict:
+    """删掉一条历史记录（只清理记录，不改账目）。"""
+    if not storage.delete_operation(op_id):
+        raise HTTPException(status_code=404, detail="这条记录不存在")
+    return {"ok": True}
 
 
 @app.post("/api/transcribe")

@@ -49,12 +49,19 @@
   .row2 { display:flex; justify-content:space-between; gap:12px; margin-top:2px; align-items:center; }
   .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .meta { color:var(--muted); font-size:12px; white-space:nowrap; flex:none;
-          display:grid; grid-template-columns:auto 26px; align-items:center; column-gap:10px; }
+          display:grid; grid-template-columns:auto 26px 22px; align-items:center; column-gap:8px; }
   .meta .edit { justify-self:end; }
+  .meta .del { justify-self:end; border:0; background:none; color:#c0c7d2;
+               cursor:pointer; font-size:12px; padding:0; }
+  .meta .del:hover { color:var(--red); }
   .meta > span { text-align:right; }
   .caret { display:inline-block; width:12px; font-style:normal; }
   .edit { border:0; background:none; color:var(--accent); font-size:12px; cursor:pointer; padding:0 4px; }
   .empty { color:var(--muted); text-align:center; padding:32px 0; }
+  /* 本月 vs 上月的结论：这是「提示」的数据版，看板娘关掉也照样显示 */
+  .spend-note { font-size:12px; color:var(--muted); margin:-4px 0 10px; padding-left:2px; }
+  .spend-note.up { color:#d97706; }
+  .spend-note.down { color:#16a34a; }
 
   .panel { background:var(--card); border-radius:16px; padding:16px 18px; margin-top:14px;
            box-shadow:0 1px 2px rgba(16,24,40,.05); }
@@ -68,7 +75,7 @@
   .trend .col { width:44px; flex:none; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:4px; }
   .trend .bar { width:100%; background:#c7dbff; border-radius:6px 6px 0 0; }
   .trend .lbl { font-size:11px; color:var(--muted); }
-  .logs { margin-top:8px; padding-top:8px; border-top:1px dashed #e2e6ee; font-size:12px; color:var(--muted); }
+  .logs { margin-top:8px; padding-top:8px; border-top:1px solid #e2e6ee; font-size:12px; color:var(--muted); }
   .logs[hidden] { display:none; }
   .logs div { margin:4px 0; }
   .logs .mark { font-weight:800; margin-right:6px; }
@@ -91,10 +98,9 @@
                    box-shadow:0 1px 3px rgba(16,24,40,.12); }
   .sect h3 { margin:14px 0 6px; font-size:13px; color:#334155; }
   .sect .muted { color:#9aa4b2; font-size:13px; margin:2px 0; }
-  .feat { list-style:none; padding:0; margin:6px 0 0; }
+  .feat { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:6px; }
   .feat li { display:flex; justify-content:space-between; align-items:center;
-             padding:7px 0; border-bottom:1px dashed #eef2f7; font-size:13px; }
-  .feat li:last-child { border-bottom:0; }
+             padding:11px 14px; border:1px solid #eef2f7; border-radius:10px; font-size:13px; }
   .feat em { font-style:normal; font-size:12px; color:#16a34a; }
   .feat em.off { color:#9aa4b2; }
   .feat em.warn { color:#f59e0b; }
@@ -107,6 +113,78 @@
                    border-radius:10px; cursor:pointer; color:var(--accent); }
   .keyhint { font-size:12px; margin:6px 0 0; color:#9aa4b2; }
   .keyhint.ok { color:#16a34a; }
+
+  /* 设置窗口：左侧菜单 + 右侧内容 */
+  .dialog.wide { max-width: 560px; }
+  .settings-body { display:flex; gap:14px; min-height:250px; }
+  .side { width:120px; flex:none; display:flex; flex-direction:column; gap:2px; }
+  .nav { display:flex; align-items:center; gap:8px; width:100%; padding:9px 10px;
+         border:0; background:transparent; border-radius:9px; font-size:13px;
+         color:#64748b; cursor:pointer; text-align:left; }
+  .nav:hover { background:#f3f6fb; }
+  .nav.on { background:#eef4ff; color:var(--accent); font-weight:600; }
+  .panes { flex:1; min-width:0; padding-right:6px; }
+  .ops { list-style:none; padding:0; margin:0; max-height:250px; overflow:auto; }
+  .ops li { display:flex; align-items:center; gap:8px; padding:7px 2px;
+            border-bottom:1px solid #eef2f7; font-size:12px; }
+  .ops .kind { flex:none; padding:1px 6px; border-radius:6px; background:#f1f5f9; color:#64748b; }
+  .ops .kind.create { background:#e8f5ec; color:#16a34a; }
+  .ops .kind.delete { background:#fdecec; color:#e5484d; }
+  .ops .kind.edit { background:#eef4ff; color:#2f7cf6; }
+  .ops .txt { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ops .undo { border:1px solid #e2e6ee; background:#fff; border-radius:8px;
+               font-size:11px; padding:2px 8px; cursor:pointer; color:#64748b; }
+  .ops .undo:disabled { opacity:.45; cursor:default; }
+
+  /* 翻页 */
+  .pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-top:14px; }
+  .pager[hidden] { display:none; }
+  .pager button { padding:6px 14px; border:1px solid #e2e6ee; background:var(--card);
+                  border-radius:9px; font-size:12px; color:#64748b; cursor:pointer; }
+  .pager button:disabled { opacity:.4; cursor:default; }
+  .pager span { font-size:12px; color:var(--muted); }
+
+  /* 通用设置里的行 */
+  .row-setting { display:flex; justify-content:space-between; align-items:center;
+                 gap:12px; padding:10px 0; }
+  .set-title { font-size:13px; color:#334155; }
+  .switch { width:42px; height:24px; border-radius:999px; border:0; background:#d7dee8;
+            position:relative; cursor:pointer; flex:none; transition:background .2s; }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px;
+                   border-radius:50%; background:#fff; transition:transform .2s; }
+  .switch.on { background:var(--accent); }
+  .switch.on::after { transform:translateX(18px); }
+
+  /* 黑夜模式：中性灰，只覆写颜色不动布局 */
+  [data-theme="dark"] { --bg:#1e1e1e; --card:#2a2a2a; --ink:#e8e8e8; --muted:#9aa0a6; }
+  [data-theme="dark"] .dialog { background:#2f2f2f; }
+  [data-theme="dark"] .ops .undo,
+  [data-theme="dark"] .keyrow button { background:#3a3a3a; border-color:#464646; color:#d6d6d6; }
+  [data-theme="dark"] .seg { background:#242424; }
+  [data-theme="dark"] .seg button.on { background:#3a3a3a; color:#7fb0ff; }
+  [data-theme="dark"] .set-title { color:#d6d6d6; }
+  [data-theme="dark"] .ops li,
+  [data-theme="dark"] .logs,
+  [data-theme="dark"] .feat li,
+  [data-theme="dark"] .time-toggle { border-color:#3a3a3a; }
+  [data-theme="dark"] .bar-track { background:#383838; }
+  [data-theme="dark"] .trend .bar { background:#4a5a6d; }
+  [data-theme="dark"] .fab { background:#2a2a2a; border-color:#3a3a3a; color:#b5b5b5; }
+  [data-theme="dark"] .entry input,
+  [data-theme="dark"] .dialog input { background:#242424; border-color:#3a3a3a; color:#e8e8e8; }
+  [data-theme="dark"] .ops .kind { background:#3a3a3a; color:#b0b0b0; }
+  [data-theme="dark"] .mask { background:rgba(0,0,0,.55); }
+
+  /* 主按钮在暗色下必须还是蓝底白字，别变白 */
+  [data-theme="dark"] .entry > button[type="submit"],
+  [data-theme="dark"] .entry #send,
+  [data-theme="dark"] .entry #qsend,
+  [data-theme="dark"] .dialog .actions .primary {
+    background:var(--accent); border-color:var(--accent); color:#fff;
+  }
+  [data-theme="dark"] .entry .mic { background:#3a3a3a; color:#d6d6d6; }
+  [data-theme="dark"] .entry .mic.rec { background:var(--red); color:#fff; }
+  [data-theme="dark"] .pager button { background:#3a3a3a; border-color:#464646; color:#d6d6d6; }
 
   /* 顶部提示条：从上方滑下来 */
   .toast { position:fixed; left:50%; top:0; z-index:200;
@@ -173,12 +251,18 @@
 
   <section class="panel">
     <h3>这个月花在哪</h3>
+    <div class="spend-note" id="spendNote" hidden></div>
     <div id="cats"></div>
     <h3 style="margin:16px 0 6px">近 6 个月</h3>
     <div class="trend" id="trend"></div>
   </section>
 
   <ul id="list"></ul>
+  <div class="pager" id="pager" hidden>
+    <button type="button" id="prevPage">上一页</button>
+    <span id="pageInfo"></span>
+    <button type="button" id="nextPage">下一页</button>
+  </div>
 </main>
 
 <div class="mask" id="mask" hidden>
@@ -208,33 +292,94 @@
 </button>
 
 <div class="mask" id="settingsMask" hidden>
-  <div class="dialog">
-    <h2>设置</h2>
-    <p class="tip" id="tipAdvice">*建议使用云端模型以取得最佳效果</p>
+  <div class="dialog wide">
+    <div class="settings-body">
+      <nav class="side" id="settingsNav">
+        <button type="button" class="nav on" data-pane="general">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="3.2"/>
+            <path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/>
+          </svg>
+          通用设置
+        </button>
+        <button type="button" class="nav" data-pane="model">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <ellipse cx="10" cy="6" rx="5.5" ry="2.2"/>
+            <path d="M4.5 6v6c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V6"/>
+            <circle cx="17.6" cy="17.4" r="2"/>
+            <path d="M17.6 14.4v.8M17.6 19.6v.8M14.6 17.4h.8M19.8 17.4h.8"/>
+          </svg>
+          模型
+        </button>
+        <button type="button" class="nav" data-pane="history">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="8"/>
+            <path d="M12 7.5V12l3 1.8"/>
+          </svg>
+          历史记录
+        </button>
+      </nav>
 
-    <div class="seg" id="asrSeg">
-      <button type="button" data-v="local">本地模型</button>
-      <button type="button" data-v="cloud">云端模型</button>
-    </div>
+      <div class="panes">
+        <section class="pane" id="pane-general">
+          <div class="row-setting">
+            <div>
+              <div class="set-title">Live2D 看板娘</div>
+              <div class="muted">*吉祥物 (๑˃̵ᴗ˂̵)و</div>
+            </div>
+            <button type="button" class="switch on" id="live2dSwitch" aria-pressed="true"></button>
+          </div>
 
-    <div class="sect" id="sectLocal" hidden>
-      <h3>① 本地模型</h3>
-      <p class="muted">orz... 正在施工中</p>
-    </div>
+          <div class="row-setting">
+            <div>
+              <div class="set-title">主题</div>
+              <div class="muted">白天 / 黑夜 / 跟随系统</div>
+            </div>
+          </div>
+          <div class="seg" id="themeSeg">
+            <button type="button" data-theme="light">白天</button>
+            <button type="button" data-theme="dark">黑夜</button>
+            <button type="button" data-theme="auto">跟随系统</button>
+          </div>
 
-    <div class="sect" id="sectCloud" hidden>
-      <h3>② 云端模型（目前只支持 DeepSeek）</h3>
-      <label class="field" for="keyInput">API Key（三个云端功能共用）</label>
-      <div class="keyrow">
-        <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off">
-        <button type="button" id="keySave">保存</button>
+          <p class="muted">账目存在本机 <b>data/app.db</b>；操作历史保留最近 <b>66 天</b>。</p>
+        </section>
+
+        <section class="pane" id="pane-model" hidden>
+          <div class="seg" id="asrSeg">
+            <button type="button" data-v="local">本地模型</button>
+            <button type="button" data-v="cloud">云端模型</button>
+          </div>
+
+          <div class="sect" id="sectLocal" hidden>
+            <h3>① 本地模型</h3>
+            <p class="tip">*建议使用云端模型以取得最佳效果</p>
+            <p class="muted">orz... 正在施工中</p>
+          </div>
+
+          <div class="sect" id="sectCloud" hidden>
+            <h3>② 云端模型（目前只支持 DeepSeek）</h3>
+            <label class="field" for="keyInput">API Key（三个云端功能共用）</label>
+            <div class="keyrow">
+              <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off">
+              <button type="button" id="keySave">保存</button>
+            </div>
+            <p class="keyhint" id="keyHint">未配置</p>
+            <ul class="feat">
+              <li><span>LLM 自然语言识别</span><em id="llmState">规则版</em></li>
+              <li><span>OCR 图像识别</span><em class="off">未接入</em></li>
+              <li><span>语音识别</span><em id="asrState">—</em></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="pane" id="pane-history" hidden>
+          <ul class="ops" id="opsList"><li class="muted">加载中…</li></ul>
+        </section>
       </div>
-      <p class="keyhint" id="keyHint">未配置</p>
-      <ul class="feat">
-        <li><span>LLM 自然语言识别</span><em id="llmState">规则版</em></li>
-        <li><span>OCR 图像识别</span><em class="off">未接入</em></li>
-        <li><span>语音识别</span><em id="asrState">—</em></li>
-      </ul>
     </div>
 
     <div class="actions">
@@ -247,7 +392,7 @@
 
 <div class="mask" id="confirmMask" hidden>
   <div class="dialog">
-    <h2>金额确认</h2>
+    <h2 id="confirmTitle">金额确认</h2>
     <p id="confirmMsg" style="margin:0;color:#475569"></p>
     <div class="actions">
       <button type="button" id="confirmCancel">取消</button>
@@ -281,6 +426,23 @@ function logLines(t) {
 function hint(msg, isError = false) {
   $("hint").style.color = isError ? "#e5484d" : "";
   $("hint").innerHTML = msg;
+}
+
+/* ---------- 看板娘：只负责「说一句」，不承担任何功能 ----------
+   它出现在页面上只有两个条件：开关开着 + 脚本加载成功。
+   任何一条不满足，下面所有调用都安静地什么都不做——记账、语音、查账、统计照常。
+   spendWarn 由 loadStats() 算出来，是「这个月花得有点多了」那句提示的数据来源。 */
+let live2dOn = true;
+let spendWarn = "";
+
+function waifuSay(text) {
+  try {
+    if (!live2dOn || !window.Live2DWaifu) return;
+    const plain = String(text).replace(/<[^>]*>/g, "").trim();
+    if (plain) window.Live2DWaifu.say(plain.length > 26 ? plain.slice(0, 25) + "…" : plain);
+  } catch (err) {
+    /* 装饰出问题就闭嘴，绝不往上抛 */
+  }
 }
 
 /* 顶部提示条：从上方滑下来，2 秒后自动收回去 */
@@ -319,72 +481,145 @@ async function loadStats() {
           <div class="lbl">${esc(t.month.slice(5))}月</div>
         </div>`).join("")
     : '<div class="empty" style="padding:10px 0">还没有数据</div>';
+
+  paintSpendNote(d);
+}
+
+/* 本月 vs 上月的结论：先落到页面上（关掉看板娘也一定看得见），
+   看板娘只是把同一句话说出口。
+   注意：比的是「本月累计」和「上月整月」，不是同期——所以话要说准，不能写「同期」。 */
+function paintSpendNote(d) {
+  const note = $("spendNote");
+  const now = new Date();
+  const day = now.getDate();
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevYm = prev.getFullYear() + "-" + String(prev.getMonth() + 1).padStart(2, "0");
+  const cur = d.total_cents || 0;
+  const row = (d.trend || []).find((t) => t.month === prevYm);
+  const pre = row ? (row.total_cents || 0) : 0;
+
+  spendWarn = "";
+  // 月初几天没有可比性；上月没账（或被删光）也没有基准——宁可不说，也别瞎比
+  if (day < 5 || !cur || !pre) { note.hidden = true; return; }
+
+  const ratio = cur / pre;
+  const pct = Math.round(ratio * 100);
+  note.hidden = false;
+  if (ratio >= 1.2) {
+    note.className = "spend-note up";
+    note.textContent = `本月已花到上月整月的 ${pct}%，超得有点多`;
+    spendWarn = "这个月花得有点多了哦";
+  } else if (ratio >= 1) {
+    note.className = "spend-note up";
+    note.textContent = `本月才过 ${day} 天，已经超过上月整月了`;
+    spendWarn = "这个月花得有点多了哦";
+  } else if (ratio >= 0.8) {
+    note.className = "spend-note";
+    note.textContent = `本月已花到上月整月的 ${pct}%`;
+  } else {
+    note.className = "spend-note down";
+    note.textContent = `才到上月整月的 ${pct}%，不慌`;
+  }
+}
+
+/* ---------- 流水列表（分页） ---------- */
+let page = 0;
+const PAGE_SIZE = 10;
+let totalCount = 0;
+
+function renderItem(t) {
+  const logs = t.logs || [];
+  const stamp = t.updated_at || t.created_at;
+  // 收起时到分，展开时到秒——两段都渲染好，靠 CSS 切换
+  const shortTime = "记录于 " + esc(fullTime(stamp));
+  const longTime = "记录于 " + esc(fullTimeSec(stamp));
+  const timeHtml = `<span class="${logs.length ? "time-toggle" : "time-plain"}"` +
+    (logs.length ? ` data-logs="${t.id}" title="点开看修改记录"` : "") +
+    `><span class="t-short">${shortTime}</span>` +
+    (logs.length ? `<span class="t-long">${longTime}</span>` : "") +
+    `<i class="caret">${logs.length ? "▾" : ""}</i></span>`;
+  const logBox = logs.length ? `
+    <div class="logs" id="logs-${t.id}" hidden>
+      ${logLines(t).map((l, i) => `<div>` +
+        (i === 0 ? '<span class="mark">·</span>' : "") +
+        `${fullTimeSec(l.at)}　${esc(l.text)}` +
+        `<span class="amt-mini">¥${l.amount == null ? "--" : yuan(l.amount)}</span>` +
+        `</div>`).join("")}
+    </div>` : "";
+  return `
+  <li>
+    <div class="row">
+      <span class="cat">${esc(t.category || "未分类")}</span>
+      <span class="amt">¥${yuan(t.amount_cents)}</span>
+    </div>
+    <div class="row2">
+      <span class="txt">${esc(t.text)}</span>
+      <span class="meta">${timeHtml}
+        <button class="edit" data-id="${t.id}" data-text="${esc(t.text)}"
+                data-amount="${t.amount_cents == null ? "" : t.amount_cents}">编辑</button>
+        <button class="del" data-del="${t.id}" title="删除这笔">✕</button>
+      </span>
+    </div>
+    ${logBox}
+  </li>`;
+}
+
+function renderPager(pages) {
+  $("pager").hidden = totalCount <= PAGE_SIZE;
+  $("pageInfo").textContent = `第 ${page + 1} / ${pages} 页 · 共 ${totalCount} 条`;
+  $("prevPage").disabled = page === 0;
+  $("nextPage").disabled = page >= pages - 1;
+}
+
+async function loadList(p) {
+  p = Math.max(0, p);
+  const d = await (await fetch(
+    `/api/transactions?limit=${PAGE_SIZE}&offset=${p * PAGE_SIZE}`)).json();
+  totalCount = d.total;
+  const pages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  if (p > pages - 1) return loadList(pages - 1);   // 删光了最后一页，往回退一页
+  page = p;
+
+  $("list").innerHTML = d.items.length
+    ? d.items.map(renderItem).join("")
+    : '<div class="empty">还没有记录，上面说一句试试</div>';
+  renderPager(pages);
 }
 
 async function load() {
   const d = await (await fetch("/api/summary")).json();
   $("total").textContent = d.total_yuan;
-  $("month").textContent = d.month + " · 最近 " + d.recent.length + " 条";
-
-  const list = $("list");
-  if (!d.recent.length) {
-    list.innerHTML = '<div class="empty">还没有记录，上面说一句试试</div>';
-    await loadStats();
-    return;
-  }
-  list.innerHTML = d.recent.map((t) => {
-    const logs = t.logs || [];
-    const stamp = t.updated_at || t.created_at;
-    // 收起时到分，展开时到秒——两段都渲染好，靠 CSS 切换
-    const shortTime = "记录于 " + esc(fullTime(stamp));
-    const longTime = "记录于 " + esc(fullTimeSec(stamp));
-    const timeHtml = `<span class="${logs.length ? "time-toggle" : "time-plain"}"` +
-      (logs.length ? ` data-logs="${t.id}" title="点开看修改记录"` : "") +
-      `><span class="t-short">${shortTime}</span>` +
-      (logs.length ? `<span class="t-long">${longTime}</span>` : "") +
-      `<i class="caret">${logs.length ? "▾" : ""}</i></span>`;
-    const logBox = logs.length ? `
-      <div class="logs" id="logs-${t.id}" hidden>
-        ${logLines(t).map((l, i) => `<div>` +
-          (i === 0 ? '<span class="mark">·</span>' : "") +
-          `${fullTimeSec(l.at)}　${esc(l.text)}` +
-          `<span class="amt-mini">¥${l.amount == null ? "--" : yuan(l.amount)}</span>` +
-          `</div>`).join("")}
-      </div>` : "";
-    return `
-    <li>
-      <div class="row">
-        <span class="cat">${esc(t.category || "未分类")}</span>
-        <span class="amt">¥${yuan(t.amount_cents)}</span>
-      </div>
-      <div class="row2">
-        <span class="txt">${esc(t.text)}</span>
-        <span class="meta">${timeHtml}
-          <button class="edit" data-id="${t.id}" data-text="${esc(t.text)}"
-                  data-amount="${t.amount_cents == null ? "" : t.amount_cents}">编辑</button>
-        </span>
-      </div>
-      ${logBox}
-    </li>`;
-  }).join("");
-
+  $("month").textContent = d.month;
+  await loadList(page);
   await loadStats();
 }
 
+$("prevPage").addEventListener("click", () => loadList(page - 1));
+$("nextPage").addEventListener("click", () => loadList(page + 1));
+
 /* 大额二次确认：确认按钮 3 秒倒计时才可点，取消随时能按 */
-function askConfirm(msg) {
+/* 二次确认。lockSeconds > 0 时按钮先锁几秒（大额用），传 0 就是普通确认 */
+function askConfirm(msg, title = "金额确认", lockSeconds = 3) {
   return new Promise((resolve) => {
     const mask = $("confirmMask"), ok = $("confirmOk"), cancel = $("confirmCancel");
+    $("confirmTitle").textContent = title;
     $("confirmMsg").textContent = msg;
     mask.hidden = false;
-    let left = 3;
-    ok.disabled = true;
-    ok.textContent = `再确认（${left}）`;
-    const timer = setInterval(() => {
-      left -= 1;
-      if (left > 0) { ok.textContent = `再确认（${left}）`; }
-      else { clearInterval(timer); ok.disabled = false; ok.textContent = "确认记这笔"; }
-    }, 1000);
+
+    let timer = null;
+    if (lockSeconds > 0) {
+      let left = lockSeconds;
+      ok.disabled = true;
+      ok.textContent = `再确认（${left}）`;
+      timer = setInterval(() => {
+        left -= 1;
+        if (left > 0) { ok.textContent = `再确认（${left}）`; }
+        else { clearInterval(timer); ok.disabled = false; ok.textContent = "确认"; }
+      }, 1000);
+    } else {
+      ok.disabled = false;
+      ok.textContent = "确定";
+    }
 
     const finish = (yes) => {
       clearInterval(timer);
@@ -419,18 +654,21 @@ async function create(text) {
         return null;
       }
       hint("存不进：" + detailMsg(d), true);
+      waifuSay("这个我存不进去…");
       return null;
     }
     if (d.multi) {                     // 一句话拆成了好几笔
       const parts = d.items.map((it) =>
         `${esc(it.parsed.category || "未分类")} ¥${it.parsed.amount_yuan}`);
       hint(`记了 ${d.items.length} 笔：` + parts.join("　·　"));
-      await load();
+      await load();                    // 先刷新统计，spendWarn 才是含这一笔的
+      waifuSay(spendWarn || "记好啦");
       return d.items[0].parsed;
     }
     const p = d.parsed;
     hint(`理解为：<b>${esc(p.category || "未分类")}</b> · <b>¥${p.amount_yuan}</b> · ${esc(p.occurred_at)}`);
-    await load();
+    await load();                      // 先刷新统计，spendWarn 才是含这一笔的
+    waifuSay(spendWarn || "记好啦");
     return p;
   }
 }
@@ -489,6 +727,11 @@ $("list").addEventListener("click", (e) => {
     }
     return;
   }
+  const delBtn = e.target.closest("[data-del]");
+  if (delBtn) {                             // 删除（软删除，可撤销）
+    deleteTx(Number(delBtn.dataset.del));
+    return;
+  }
   const btn = e.target.closest(".edit");
   if (!btn) return;
   editingId = Number(btn.dataset.id);
@@ -516,8 +759,9 @@ $("editSave").addEventListener("click", async () => {
   const text = $("editText").value.trim();
   const amt = $("editAmount").value.trim();
   if (!text) { $("editErr").textContent = "「做了什么」不能是空的"; return; }
-  if (amt && !(Number(amt) >= 0)) { $("editErr").textContent = "金额要填数字"; return; }
-  const amount_cents = amt ? Math.round(Number(amt) * 100) : null;
+  if (!amt) { $("editErr").textContent = "金额不能为空"; return; }
+  if (!(Number(amt) > 0)) { $("editErr").textContent = "金额要大于 0"; return; }
+  const amount_cents = Math.round(Number(amt) * 100);
 
   let confirmLarge = false;
   for (;;) {
@@ -693,7 +937,6 @@ function paintSettings(hasKey) {
   });
   $("sectLocal").hidden = isCloud;
   $("sectCloud").hidden = !isCloud;
-  $("tipAdvice").hidden = isCloud;      // 已经在云端了，这条建议就没必要占地方
 
   const st = $("asrState");
   st.textContent = hasKeyCache ? "DeepSeek 云端" : "缺少 API Key";
@@ -709,15 +952,157 @@ function paintSettings(hasKey) {
 }
 
 async function loadSettings() {
+  let d = null;
   try {
-    const d = await (await fetch("/api/settings")).json();
-    asrSetting = d.asr_backend || "auto";
-    keyHintCache = d.key_hint || "";
-    paintSettings(d.has_key);
+    d = await (await fetch("/api/settings")).json();
   } catch (e) {
     paintSettings(false);
+    return;
+  }
+  asrSetting = d.asr_backend || "auto";
+  keyHintCache = d.key_hint || "";
+  paintSettings(d.has_key);              // Key 状态先画，它不能因为下面的事失败
+  applyTheme(d.theme || "auto");
+  paintLive2d(d.live2d !== false);       // 装饰最后画，出错只影响它自己
+}
+
+/* ---------- 主题 ---------- */
+let themeSetting = "auto";
+
+function applyTheme(theme) {
+  themeSetting = theme || "auto";
+  const dark = themeSetting === "dark" ||
+    (themeSetting === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  document.querySelectorAll("#themeSeg button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.theme === themeSetting);
+  });
+}
+
+// 「跟随系统」要真的跟随：用户在系统里切深浅色时实时跟上，不用刷新页面
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (themeSetting === "auto") applyTheme("auto");
+});
+
+$("themeSeg").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-theme]");
+  if (!btn) return;
+  applyTheme(btn.dataset.theme);          // 先切，再存
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ theme: btn.dataset.theme }),
+    });
+  } catch (err) {}
+});
+
+/* ---------- Live2D 开关（渲染实现在 live2d/waifu.js，见 live2d/README.md） ----------
+   开关只管「要不要这个人」，不参与任何业务逻辑。 */
+function paintLive2d(on) {
+  live2dOn = on;
+  $("live2dSwitch").classList.toggle("on", on);
+  $("live2dSwitch").setAttribute("aria-pressed", on ? "true" : "false");
+  applyLive2d();
+}
+
+function applyLive2d() {
+  // 真加载/隐藏在这里：关掉时一个 CDN 脚本都不会加载
+  try {
+    if (window.Live2DWaifu) window.Live2DWaifu.setEnabled(live2dOn);
+  } catch (err) {
+    console.warn("[live2d] 开关没生效，页面其余部分不受影响", err);
   }
 }
+
+// 看板娘脚本在页面最底部那块生成区，主脚本解析时它还没到：
+// DOM 解析完再对齐一次，免得出现「开关是开的，人却没出来」
+document.addEventListener("DOMContentLoaded", applyLive2d);
+
+$("live2dSwitch").addEventListener("click", async () => {
+  paintLive2d(!live2dOn);
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ live2d: live2dOn }),
+    });
+  } catch (err) {}
+});
+
+async function deleteTx(id) {
+  const ok = await askConfirm("确定删除这笔账吗？删除后可以在「历史记录」里撤销。", "删除确认", 0);
+  if (!ok) return;
+  const r = await fetch("/api/transactions/" + id, { method: "DELETE" });
+  const d = await r.json();
+  if (!r.ok) { hint("删不掉：" + (d.detail || "未知错误"), true); return; }
+  toast("已删除，可在历史记录里撤销");
+  await load();
+  if (!$("pane-history").hidden) await loadOps();
+}
+
+/* ---------- 操作历史 ---------- */
+const OP_LABEL = { create: "新增", edit: "修改", delete: "删除", restore: "恢复" };
+
+async function loadOps() {
+  const list = $("opsList");
+  try {
+    const ops = await (await fetch("/api/operations?limit=60")).json();
+    if (!ops.length) {
+      list.innerHTML = '<li class="muted">还没有操作记录</li>';
+      return;
+    }
+    list.innerHTML = ops.map((o) => `
+      <li>
+        <span class="kind ${esc(o.kind)}">${esc(OP_LABEL[o.kind] || o.kind)}</span>
+        <span class="txt" title="${esc(o.tx_text || "")}">${esc(o.tx_text || "（已不存在的记录）")}</span>
+        <span class="muted">${esc(fullTime(o.created_at))}</span>
+        <button class="undo" data-op="${o.id}" ${o.undone ? "disabled" : ""}>
+          ${o.undone ? "已撤销" : "撤销"}
+        </button>
+        <button class="undo" data-opdel="${o.id}" title="删除这条记录">✕</button>
+      </li>`).join("");
+  } catch (e) {
+    list.innerHTML = '<li class="muted">读不到历史记录</li>';
+  }
+}
+
+$("opsList").addEventListener("click", async (e) => {
+  const delBtn = e.target.closest("[data-opdel]");
+  if (delBtn) {
+    const ok = await askConfirm("删掉这条历史记录？只清理记录，不影响账目本身。",
+                                "删除记录", 0);
+    if (!ok) return;
+    const r = await fetch("/api/operations/" + delBtn.dataset.opdel, { method: "DELETE" });
+    const d = await r.json();
+    if (!r.ok) { toast(d.detail || "删不掉", false); return; }
+    toast("记录已删除");
+    await loadOps();
+    return;
+  }
+
+  const btn = e.target.closest("[data-op]");
+  if (!btn || btn.disabled) return;
+  const r = await fetch("/api/operations/" + btn.dataset.op + "/undo", { method: "POST" });
+  const d = await r.json();
+  if (!r.ok) { toast(d.detail || "撤销失败", false); return; }
+  toast("已撤销");
+  await loadOps();
+  await load();
+});
+
+/* 设置窗口左侧菜单 */
+$("settingsNav").addEventListener("click", (e) => {
+  const item = e.target.closest(".nav");
+  if (!item) return;
+  document.querySelectorAll("#settingsNav .nav")
+    .forEach((b) => b.classList.toggle("on", b === item));
+  const pane = item.dataset.pane;
+  $("pane-general").hidden = pane !== "general";
+  $("pane-model").hidden = pane !== "model";
+  $("pane-history").hidden = pane !== "history";
+  if (pane === "history") loadOps();
+});
 
 $("settingsBtn").addEventListener("click", () => {
   $("settingsMask").hidden = false;
@@ -779,5 +1164,551 @@ $("keySave").addEventListener("click", async () => {
 loadSettings();
 load();
 </script>
+
+<!-- live2d:begin 由 live2d/build-snippet.js 生成，别手改 -->
+<!-- ============================================================
+  Live2D 看板娘（可选装饰）
+  用法：把下面整段粘贴到 templates/index.html 的 </body> 前面，一行都不用改。
+  特点：
+    - 纯前端，不碰 app.py、不新增接口、不进 Docker 镜像
+    - 只从 CDN 拉代码和模型，仓库体积不变
+    - 默认不自启：由页面的 paintLive2d() 调 Live2DWaifu.setEnabled(true) 才加载
+    - 任何一步失败都只 warn 一条，不影响记账、语音、查账、统计
+    - 想让它说话：在业务代码里调 WaifuSay("记好啦")
+  下面是 live2d/waifu.js 的完整内容，由 build-snippet.js 生成，不要在这里改。
+   ============================================================ -->
+<script>
+/*!
+ * Live2D 看板娘 —— 记账小助手
+ * ---------------------------------------------------------------
+ * 一个文件干完这些事：
+ *   1. 从 CDN 依次尝试多个镜像，加载 L2Dwidget 3.x（Cubism 2 运行时）
+ *   2. 挂上 npm 上的模型包（haru01），失败就安静地放弃
+ *   3. 对话气泡（跟模型解耦）：window.WaifuSay("记好啦")
+ *   4. 鼠标拖动 + 位置记忆（localStorage），单击互动照旧
+ *
+ * 依赖（全部走 CDN，不进仓库、不进 Docker 镜像）：
+ *   代码  live2d-widget@3.1.4            GPL-2.0
+ *   模型  live2d-widget-model-haru@1.0.5 模型版权归原作者，仅学习演示用
+ *
+ * 对外接口：
+ *   Live2DWaifu.setEnabled(bool)   开/关（记账页的 paintLive2d 调这个）
+ *   Live2DWaifu.say(text, ms)      说话（WaifuSay 是它的别名）
+ *   Live2DWaifu.hide() / show() / toggle()
+ *   Live2DWaifu.getOffset()        读当前位置 {x, y}
+ *   Live2DWaifu.setOffset(x, y, persist)
+ *   Live2DWaifu.resetOffset()      回到默认位置并清掉本地记录
+ *   Live2DWaifu.state()            当前状态快照
+ *   Live2DWaifu.onStatus(fn)       订阅状态变化，返回取消订阅函数
+ *   Live2DWaifu.diagnose()         逐个探测镜像，返回 Promise<Array>
+ *
+ * 注意：默认不自启。必须有人调 setEnabled(true)，脚本才会去加载。
+ */
+(function () {
+  "use strict";
+
+  if (window.Live2DWaifu) return;
+
+  var CFG = {
+    // 按顺序尝试；同一个 base 既取代码也取模型，命中哪个就整套用哪个
+    mirrors: [
+      "https://fastly.jsdelivr.net/npm/",
+      "https://gcore.jsdelivr.net/npm/",
+      "https://testingcf.jsdelivr.net/npm/",
+      "https://unpkg.com/"
+    ],
+    scriptPath: "live2d-widget@3.1.4/lib/L2Dwidget.min.js",
+    modelPath: "live2d-widget-model-haru@1.0.5/01/assets/haru01.model.json",
+    display: { position: "right", width: 150, height: 300, hOffset: 0, vOffset: 0 },
+    // 在 display 之上再整体平移（像素，正数向右/向下）。-120 是试出来的：让开右下角的设置按钮。
+    offset: { x: -120, y: 0 },
+    storageKey: "live2d.offset.v1",
+    // 窄于这个宽度就不加载：150×300 的画布 + (-120) 偏移，再窄就会压住正文右边缘的按钮。
+    // 1240 是算出来的：正文栏 680 居中，窗口 1240 时正文右边缘 960，小人左边缘 970。
+    minWidth: 1240,
+    drag: true,
+    dragThreshold: 4,
+    // 气泡锚点：从画布顶部往下挪多少像素再贴头顶。觉得高/低就改这个数（控制台也能改）
+    bubbleDropY: 60,
+    mirrorTimeout: 7000,
+    bubbleMs: 4200,
+    autoStart: false,
+    // 点模型时随机说一句
+    tapLines: ["别戳啦，快去记一笔～", "记账小助手在此！", "记不清花了多少？问我呀。"]
+  };
+
+  var state = { status: "idle", enabled: false, base: null, message: "未启动" };
+  var offset = readOffset();
+  var listeners = [];
+  var bubble = null;
+  var hideTimer = 0;
+  var drag = null;
+  var suppressClick = false;
+
+  /* ---------------- 位置记忆 ---------------- */
+
+  function clampOffset(x, y) {
+    var vw = window.innerWidth || 1200;
+    var vh = window.innerHeight || 800;
+    var maxX = 80;
+    var maxY = 80;
+    var minX = -(vw - 90);
+    var minY = -(vh - 140);
+    return {
+      x: Math.round(Math.min(maxX, Math.max(minX, x))),
+      y: Math.round(Math.min(maxY, Math.max(minY, y)))
+    };
+  }
+
+  function readOffset() {
+    var fallback = { x: CFG.offset.x, y: CFG.offset.y };
+    try {
+      var raw = window.localStorage && window.localStorage.getItem(CFG.storageKey);
+      if (!raw) return fallback;
+      var saved = JSON.parse(raw);
+      if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+        return clampOffset(saved.x, saved.y);
+      }
+    } catch (err) { /* 隐私模式 / 坏数据：用默认值 */ }
+    return fallback;
+  }
+
+  function saveOffset() {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(CFG.storageKey, JSON.stringify(offset));
+      }
+    } catch (err) { /* 存不了就算了，不打断拖拽 */ }
+  }
+
+  function applyOffset() {
+    var el = document.getElementById("live2d-widget");
+    if (el) el.style.transform = "translate(" + offset.x + "px," + offset.y + "px)";
+  }
+
+  // init 之后容器是同步创建的，但保险起见还是等一下
+  function applyOffsetWhenReady() {
+    var tries = 0;
+    (function attempt() {
+      if (document.getElementById("live2d-widget")) { applyOffset(); return; }
+      if (tries++ < 20) setTimeout(attempt, 100);
+    })();
+  }
+
+  function setOffset(x, y, persist) {
+    var next = clampOffset(Number(x) || 0, Number(y) || 0);
+    offset = next;
+    applyOffset();
+    notifyOffset();
+    if (persist) saveOffset();
+    return { x: offset.x, y: offset.y };
+  }
+
+  function resetOffset() {
+    offset = clampOffset(CFG.offset.x, CFG.offset.y);
+    applyOffset();
+    notifyOffset();
+    try {
+      if (window.localStorage) window.localStorage.removeItem(CFG.storageKey);
+    } catch (err) { /* 忽略 */ }
+    return { x: offset.x, y: offset.y };
+  }
+
+  // 让页面（调试面板之类）能感知拖动后的位置变化
+  function notifyOffset() {
+    if (bubble && bubble.classList.contains("on")) placeBubble(bubble);
+    try {
+      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+        document.dispatchEvent(new CustomEvent("live2d:offset", { detail: { x: offset.x, y: offset.y } }));
+      }
+    } catch (err) { /* 老浏览器没有 CustomEvent，不影响拖拽 */ }
+  }
+
+  /* ---------------- 状态 ---------------- */
+
+  function emit() {
+    listeners.forEach(function (fn) {
+      try { fn(state); } catch (err) { console.warn("[live2d] status listener failed", err); }
+    });
+  }
+
+  function setStatus(status, message, base) {
+    state.status = status;
+    state.message = message;
+    if (base) state.base = base;
+    emit();
+  }
+
+  function hostOf(url) {
+    try { return new URL(url).host; } catch (err) { return url; }
+  }
+
+  /* ---------------- 样式（只注入一次） ---------------- */
+
+  function injectStyle() {
+    if (document.getElementById("waifu-style")) return;
+    var css = document.createElement("style");
+    css.id = "waifu-style";
+    css.textContent = [
+      /* 看板娘压在页面内容之上，但必须低于弹层和右下角的设置按钮 */
+      "#live2d-widget{position:fixed!important;z-index:3!important;pointer-events:none!important;}",
+      "#live2d-widget canvas{pointer-events:auto!important;cursor:grab;touch-action:none;}",
+      /* 编辑 / 设置 / 金额确认弹层要盖住看板娘（原样式没写 z-index，这里补上） */
+      ".mask{z-index:9000!important;}",
+      /* 对话气泡：位置由 JS 按小人实时算，不写死 right/bottom；不吃点击、不挡输入框 */
+      "#waifu-bubble{position:fixed;left:0;top:0;z-index:4;max-width:230px;",
+      "padding:9px 12px;border-radius:12px;background:#fff;color:#1f2933;font-size:13px;line-height:1.55;",
+      "box-shadow:0 6px 20px rgba(16,24,40,.14);border:1px solid #e6ebf3;pointer-events:none;",
+      "opacity:0;transform:translateY(6px);transition:opacity .18s ease,transform .18s ease;}",
+      "#waifu-bubble.on{opacity:1;transform:translateY(0);}",
+      "#waifu-bubble::after{content:'';position:absolute;left:50%;margin-left:-6px;bottom:-6px;width:12px;height:12px;",
+      "background:#fff;border-right:1px solid #e6ebf3;border-bottom:1px solid #e6ebf3;transform:rotate(45deg);}",
+      /* 深色主题 */
+      '[data-theme="dark"] #waifu-bubble{background:#2a2a2a;color:#e8e8e8;border-color:#3a3a3a;',
+      "box-shadow:0 6px 20px rgba(0,0,0,.45);}",
+      '[data-theme="dark"] #waifu-bubble::after{background:#2a2a2a;border-color:#3a3a3a;}',
+      /* 窄屏直接不显示，避免挡住输入框 */
+      "@media (max-width:767px){#live2d-widget,#waifu-bubble{display:none!important;}}"
+    ].join("");
+    (document.head || document.documentElement).appendChild(css);
+  }
+
+  /* ---------------- 气泡 ---------------- */
+
+  function ensureBubble() {
+    if (bubble && document.body.contains(bubble)) return bubble;
+    bubble = document.createElement("div");
+    bubble.id = "waifu-bubble";
+    bubble.setAttribute("role", "status");
+    bubble.setAttribute("aria-live", "polite");
+    document.body.appendChild(bubble);
+    return bubble;
+  }
+
+  function say(text, ms) {
+    if (!text) return;
+    if (state.status === "failed") return; // 模型都没了，别留一句孤零零的话
+    var el = ensureBubble();
+    el.textContent = String(text);
+    placeBubble(el); // 先按小人当前位置摆好，再显示
+    el.classList.add("on");
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { el.classList.remove("on"); }, ms || CFG.bubbleMs);
+  }
+
+  // 气泡跟着小人走：贴在头顶，左右不出屏
+  function placeBubble(el) {
+    var vw = window.innerWidth || 1200;
+    var vh = window.innerHeight || 800;
+    var width = el.offsetWidth || 200;
+    var height = el.offsetHeight || 40;
+    var left;
+    var top;
+    var host = document.getElementById("live2d-widget");
+
+    if (host && typeof host.getBoundingClientRect === "function") {
+      var rect = host.getBoundingClientRect();
+      left = rect.left + rect.width / 2 - width / 2;
+      // 画布顶部到头顶之间有一段空白，往下挪 bubbleDropY 再贴着头
+      top = rect.top + CFG.bubbleDropY - height - 8;
+    } else {
+      left = vw - 168 - width;
+      top = vh - 196 - height;
+    }
+
+    left = Math.max(8, Math.min(vw - width - 8, left));
+    top = Math.max(8, Math.min(vh - height - 8, top));
+    el.style.left = Math.round(left) + "px";
+    el.style.top = Math.round(top) + "px";
+  }
+
+  /* ---------------- 载入 ---------------- */
+
+  function loadScript(url, timeout) {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error("timeout"));
+      }, timeout);
+
+      script.src = url;
+      script.async = true;
+      script.onload = function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(url);
+      };
+      script.onerror = function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error("network"));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
+
+  function boot(base) {
+    if (!window.L2Dwidget) throw new Error("L2Dwidget 未挂载");
+
+    var modelUrl = base + CFG.modelPath;
+    var result = null;
+    try {
+      result = window.L2Dwidget.init({
+        model: { jsonPath: modelUrl, scale: 1 },
+        display: {
+          position: CFG.display.position,
+          width: CFG.display.width,
+          height: CFG.display.height,
+          hOffset: CFG.display.hOffset,
+          vOffset: CFG.display.vOffset
+        },
+        mobile: { show: false },
+        react: { opacityDefault: 0.95, opacityOnHover: 0.75 },
+        dialog: { enable: false }, // 自带对话框要连一言接口，这里不用
+        dev: { border: false }
+      });
+    } catch (err) {
+      throw new Error("init 抛错：" + err.message);
+    }
+
+    setStatus("running", "已加载 · " + hostOf(base), base);
+    applyOffsetWhenReady();
+
+    // L2Dwidget.init 有的版本不返回 Promise，所以两种都兼容
+    if (result && typeof result.then === "function") {
+      result.catch(function (err) {
+        setStatus("failed", "渲染失败：" + (err && err.message ? err.message : err), base);
+      });
+    }
+  }
+
+  function tryMirror(index) {
+    if (index >= CFG.mirrors.length) {
+      setStatus("failed", "所有镜像都没连上，看板娘已跳过");
+      return;
+    }
+    var base = CFG.mirrors[index];
+    setStatus("loading", "正在尝试 " + hostOf(base));
+
+    loadScript(base + CFG.scriptPath, CFG.mirrorTimeout)
+      .then(function () { boot(base); })
+      .catch(function (err) {
+        console.warn("[live2d] 镜像不可用：" + base + "（" + err.message + "）");
+        tryMirror(index + 1);
+      });
+  }
+
+  function start() {
+    if (!state.enabled) return;
+    if (state.status === "loading" || state.status === "running") return;
+    if (window.innerWidth < CFG.minWidth) {
+      setStatus("idle", "窗口太窄（<" + CFG.minWidth + "px），看板娘先不加载");
+      console.info("[live2d] 窗口宽度 " + window.innerWidth + "px < " + CFG.minWidth + "px，看板娘不加载");
+      return;
+    }
+    if (!window.WebGLRenderingContext) {
+      setStatus("failed", "浏览器不支持 WebGL");
+      return;
+    }
+    injectStyle();
+    tryMirror(0);
+  }
+
+  function setEnabled(on) {
+    var next = !!on;
+    if (next === state.enabled) {
+      if (next) start(); // 失败后又被打开，再试一次
+      return;
+    }
+    state.enabled = next;
+
+    if (!next) {
+      setVisible(false);
+      if (bubble) bubble.classList.remove("on");
+      // 关掉就忘掉位置：否则再打开时容器会被重新定位，一拖又跳回旧位置
+      resetOffset();
+      emit();
+      return;
+    }
+
+    // 已经 init 过就只负责显示，别重复 init（会多出一个画布）
+    if (state.status === "failed") state.status = "idle";
+    setVisible(true);
+    applyOffset();
+    start();
+  }
+
+  /* ---------------- 拖动 / 显隐 ---------------- */
+
+  function onPointerDown(event) {
+    suppressClick = false;
+    if (!CFG.drag) return;
+    if (!event.target || event.target.id !== "live2dcanvas") return;
+    if (event.button !== undefined && event.button !== 0) return;
+    if (!state.enabled) return;
+
+    drag = {
+      x0: event.clientX,
+      y0: event.clientY,
+      ox: offset.x,
+      oy: offset.y,
+      moved: false,
+      canvas: event.target
+    };
+    drag.canvas.style.cursor = "grabbing";
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  }
+
+  function onPointerMove(event) {
+    if (!drag) return;
+    var dx = event.clientX - drag.x0;
+    var dy = event.clientY - drag.y0;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < CFG.dragThreshold) return;
+
+    drag.moved = true;
+    offset = clampOffset(drag.ox + dx, drag.oy + dy);
+    applyOffset();
+    notifyOffset();
+    if (event.cancelable) event.preventDefault();
+    if (document.body) document.body.style.userSelect = "none";
+  }
+
+  function onPointerUp() {
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerUp);
+    if (!drag) return;
+
+    var moved = drag.moved;
+    if (drag.canvas) drag.canvas.style.cursor = "";
+    drag = null;
+    if (document.body) document.body.style.userSelect = "";
+
+    if (moved) {
+      suppressClick = true;
+      saveOffset();
+    }
+  }
+
+  function setVisible(visible) {
+    var el = document.getElementById("live2d-widget");
+    if (el) el.style.display = visible ? "" : "none";
+    if (!visible && bubble) bubble.classList.remove("on");
+  }
+
+  /* ---------------- 诊断 ---------------- */
+
+  function probe(base, timeout) {
+    var url = base + CFG.modelPath;
+    var startedAt = Date.now();
+    return new Promise(function (resolve) {
+      var done = false;
+      var ctrl = typeof AbortController === "function" ? new AbortController() : null;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        resolve({ base: base, ok: false, ms: Date.now() - startedAt, reason: "超时" });
+      }, timeout || 5000);
+
+      fetch(url, { method: "HEAD", mode: "cors", signal: ctrl ? ctrl.signal : undefined })
+        .then(function (res) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve({ base: base, ok: res.ok, ms: Date.now() - startedAt, reason: res.ok ? "OK" : "HTTP " + res.status });
+        })
+        .catch(function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve({ base: base, ok: false, ms: Date.now() - startedAt, reason: (err && err.message) || "失败" });
+        });
+    });
+  }
+
+  function diagnose() {
+    return Promise.all(CFG.mirrors.map(function (base) { return probe(base); }));
+  }
+
+  /* ---------------- 对外 ---------------- */
+
+  window.Live2DWaifu = {
+    config: CFG,
+    start: start,
+    setEnabled: setEnabled,
+    isEnabled: function () { return state.enabled; },
+    say: say,
+    hide: function () { setVisible(false); },
+    show: function () { setVisible(true); },
+    toggle: function () {
+      var el = document.getElementById("live2d-widget");
+      setVisible(!el || el.style.display === "none");
+    },
+    getOffset: function () { return { x: offset.x, y: offset.y }; },
+    setOffset: setOffset,
+    resetOffset: resetOffset,
+    state: function () {
+      return {
+        status: state.status,
+        enabled: state.enabled,
+        base: state.base,
+        message: state.message,
+        offset: { x: offset.x, y: offset.y }
+      };
+    },
+    onStatus: function (fn) {
+      listeners.push(fn);
+      try { fn(state); } catch (err) { console.warn(err); }
+      return function () {
+        var i = listeners.indexOf(fn);
+        if (i >= 0) listeners.splice(i, 1);
+      };
+    },
+    diagnose: diagnose
+  };
+
+  // 业务代码里更短的名字
+  window.WaifuSay = say;
+
+  // 单击互动：拖完的那一下不再触发；没拖动就照旧说句话
+  document.addEventListener("click", function (event) {
+    if (suppressClick) {
+      suppressClick = false;
+      if (event.target && event.target.id === "live2dcanvas") {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+      return;
+    }
+    if (!event.target || event.target.tagName !== "CANVAS" || event.target.id !== "live2dcanvas") return;
+    var lines = CFG.tapLines;
+    say(lines[Math.floor(Math.random() * lines.length)]);
+  }, true);
+
+  document.addEventListener("pointerdown", onPointerDown, { passive: true });
+
+  // 窗口尺寸变了，气泡要重新贴到小人头顶
+  window.addEventListener("resize", function () {
+    if (bubble && bubble.classList.contains("on")) placeBubble(bubble);
+  });
+
+  if (CFG.autoStart) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", function () { setEnabled(true); });
+    } else {
+      setEnabled(true);
+    }
+  }
+})();
+</script>
+
+<!-- live2d:end -->
 </body>
 </html>

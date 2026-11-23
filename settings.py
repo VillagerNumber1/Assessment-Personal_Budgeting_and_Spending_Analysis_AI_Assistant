@@ -12,7 +12,11 @@ from pathlib import Path
 from config import ASR_BACKEND, DATA_DIR
 
 PATH = DATA_DIR / "settings.json"
-DEFAULTS = {"asr_backend": ASR_BACKEND}
+DEFAULTS = {
+    "asr_backend": ASR_BACKEND,
+    "live2d": True,          # 看板娘默认开（具体渲染见 HANDOFF_LIVE2D.md）
+    "theme": "auto",         # light / dark / auto
+}
 
 
 def load() -> dict:
