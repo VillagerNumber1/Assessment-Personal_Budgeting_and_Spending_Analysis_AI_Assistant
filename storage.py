@@ -8,6 +8,7 @@
 
 数据库就是一个文件：data/app.db。复制它 = 备份，删掉它 = 重来。
 """
+import json
 import os
 import sqlite3
 from datetime import date
@@ -27,24 +28,26 @@ create table if not exists transactions (
     category    text,                          -- 类别，可空
     status      text    not null default 'confirmed',  -- draft / confirmed
     created_at  text    not null default (datetime('now', 'localtime')),
-    updated_at  text                                    -- 只在用户编辑过之后才有值
+    updated_at  text,                                   -- 只在用户编辑过之后才有值
+    deleted_at  text                                    -- 软删除：有值就代表已删
 );
 
 create index if not exists idx_tx_date on transactions(occurred_at);
 create index if not exists idx_tx_category on transactions(category);
 
--- 编辑记录：只追加，不改不删，给用户看「这笔账变过什么」
-create table if not exists transaction_logs (
-    id               integer primary key autoincrement,
-    tx_id            integer not null,
-    old_text         text,
-    old_amount_cents integer,
-    new_text         text,
-    new_amount_cents integer,
-    changed_at       text    not null default (datetime('now', 'localtime'))
+-- 操作历史：增 / 改 / 删 / 恢复，全都留痕，并且可以撤销
+create table if not exists operations (
+    id          integer primary key autoincrement,
+    kind        text    not null,        -- create / edit / delete / restore
+    tx_id       integer not null,
+    before_json text,                    -- 操作前的快照
+    after_json  text,                    -- 操作后的快照
+    created_at  text    not null default (datetime('now', 'localtime')),
+    undone      integer not null default 0
 );
 
-create index if not exists idx_log_tx on transaction_logs(tx_id);
+create index if not exists idx_op_tx on operations(tx_id);
+create index if not exists idx_op_time on operations(created_at);
 """
 
 
@@ -61,6 +64,25 @@ def _migrate(con: sqlite3.Connection) -> None:
     cols = {row["name"] for row in con.execute("pragma table_info(transactions)")}
     if "updated_at" not in cols:
         con.execute("alter table transactions add column updated_at text")
+    if "deleted_at" not in cols:
+        con.execute("alter table transactions add column deleted_at text")
+
+
+def _snapshot(con: sqlite3.Connection, tx_id: int) -> dict | None:
+    """取一条账的完整快照，用于操作留痕和撤销。"""
+    row = con.execute("select * from transactions where id = ?", (tx_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def _log(con: sqlite3.Connection, kind: str, tx_id: int,
+         before: dict | None, after: dict | None) -> None:
+    con.execute(
+        "insert into operations (kind, tx_id, before_json, after_json)"
+        " values (?, ?, ?, ?)",
+        (kind, tx_id,
+         json.dumps(before, ensure_ascii=False) if before else None,
+         json.dumps(after, ensure_ascii=False) if after else None),
+    )
 
 
 def init() -> None:
@@ -72,6 +94,7 @@ def init() -> None:
         con.commit()
     finally:
         con.close()
+    prune_operations(66)          # 只留最近 66 天的操作记录
 
 
 def add(text: str,
@@ -87,8 +110,10 @@ def add(text: str,
             " values (?, ?, ?, ?, ?)",
             (text, amount_cents, occurred_at or date.today().isoformat(), category, status),
         )
+        new_id = int(cur.lastrowid)
+        _log(con, "create", new_id, None, _snapshot(con, new_id))
         con.commit()
-        return int(cur.lastrowid)
+        return new_id
     finally:
         con.close()
 
@@ -120,34 +145,156 @@ def update(tx_id: int, text: str, amount_cents: int | None,
             " updated_at = datetime('now', 'localtime') where id = ?",
             (text, amount_cents, category, tx_id),
         )
-        # 改之前的样子记一笔，只追加不改，这就是「编辑记录」
-        con.execute(
-            "insert into transaction_logs"
-            " (tx_id, old_text, old_amount_cents, new_text, new_amount_cents)"
-            " values (?, ?, ?, ?, ?)",
-            (tx_id, old["text"], old["amount_cents"], text, amount_cents),
-        )
+        # 改之前和改之后都留一份，撤销时能精确还原
+        _log(con, "edit", tx_id, dict(old), _snapshot(con, tx_id))
         con.commit()
         return True
     finally:
         con.close()
 
 
-def list_recent(limit: int = 50) -> list[dict]:
-    """最近的流水，新的在上面。每条带上它的编辑记录。"""
+def delete(tx_id: int) -> bool:
+    """软删除：只打时间戳，数据还在，随时能撤销。"""
+    con = _connect()
+    try:
+        old = _snapshot(con, tx_id)
+        if old is None or old.get("deleted_at"):
+            return False
+        con.execute(
+            "update transactions set deleted_at = datetime('now', 'localtime') where id = ?",
+            (tx_id,))
+        _log(con, "delete", tx_id, old, None)
+        con.commit()
+        return True
+    finally:
+        con.close()
+
+
+def restore(tx_id: int) -> bool:
+    """撤销删除。"""
+    con = _connect()
+    try:
+        old = _snapshot(con, tx_id)
+        if old is None or not old.get("deleted_at"):
+            return False
+        con.execute("update transactions set deleted_at = null where id = ?", (tx_id,))
+        _log(con, "restore", tx_id, None, _snapshot(con, tx_id))
+        con.commit()
+        return True
+    finally:
+        con.close()
+
+
+def operations(limit: int = 100) -> list[dict]:
+    """全局操作历史，新的在上面，带上当时的文字方便一眼看懂。"""
+    con = _connect()
+    try:
+        rows = con.execute(
+            "select o.*, t.text as tx_text, t.deleted_at as tx_deleted"
+            " from operations o left join transactions t on t.id = o.tx_id"
+            " order by o.id desc limit ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+def undo(op_id: int) -> bool:
+    """撤销一条操作。只允许撤销还没撤销过的。"""
+    con = _connect()
+    try:
+        op = con.execute("select * from operations where id = ?", (op_id,)).fetchone()
+        if op is None or op["undone"]:
+            return False
+
+        before = json.loads(op["before_json"]) if op["before_json"] else None
+        kind, tx_id = op["kind"], op["tx_id"]
+
+        if kind in ("create", "restore"):
+            con.execute(
+                "update transactions set deleted_at = datetime('now','localtime') where id = ?",
+                (tx_id,))
+        elif kind == "delete":
+            con.execute("update transactions set deleted_at = null where id = ?", (tx_id,))
+        elif kind == "edit" and before:
+            con.execute(
+                "update transactions set text = ?, amount_cents = ?, category = ?,"
+                " updated_at = datetime('now','localtime') where id = ?",
+                (before.get("text"), before.get("amount_cents"),
+                 before.get("category"), tx_id))
+
+        con.execute("update operations set undone = 1 where id = ?", (op_id,))
+        con.commit()
+        return True
+    finally:
+        con.close()
+
+
+def delete_operation(op_id: int) -> bool:
+    """删掉一条历史记录本身。只清理记录，不回滚账目。"""
+    con = _connect()
+    try:
+        cur = con.execute("delete from operations where id = ?", (op_id,))
+        con.commit()
+        return cur.rowcount > 0
+    finally:
+        con.close()
+
+
+def prune_operations(days: int = 66) -> int:
+    """只保留最近 N 天的操作记录，再老的清掉（题目要求 66 天）。"""
+    con = _connect()
+    try:
+        cur = con.execute(
+            "delete from operations where created_at < datetime('now','localtime', ?)",
+            (f"-{days} days",))
+        con.commit()
+        return cur.rowcount
+    finally:
+        con.close()
+
+
+def list_recent(limit: int = 50, offset: int = 0) -> list[dict]:
+    """最近的流水（不含已删除），新的在上面。每条带上它的修改记录。"""
     con = _connect()
     try:
         rows = [dict(r) for r in con.execute(
-            "select * from transactions order by id desc limit ?", (limit,)
+            "select * from transactions where deleted_at is null"
+            " order by id desc limit ? offset ?", (limit, offset)
         ).fetchall()]
         for row in rows:
-            row["logs"] = [dict(x) for x in con.execute(
-                "select * from transaction_logs where tx_id = ? order by id desc",
-                (row["id"],),
-            ).fetchall()]
+            row["logs"] = _edit_logs(con, row["id"])
         return rows
     finally:
         con.close()
+
+
+def count_transactions() -> int:
+    """一共多少条（不含已删除），给翻页用。"""
+    con = _connect()
+    try:
+        return int(con.execute(
+            "select count(*) from transactions where deleted_at is null").fetchone()[0])
+    finally:
+        con.close()
+
+
+def _edit_logs(con: sqlite3.Connection, tx_id: int) -> list[dict]:
+    """把 operations 里的 edit 记录转成前端认识的形状。"""
+    rows = con.execute(
+        "select * from operations where tx_id = ? and kind = 'edit' and undone = 0"
+        " order by id desc", (tx_id,)).fetchall()
+    logs = []
+    for r in rows:
+        before = json.loads(r["before_json"]) if r["before_json"] else {}
+        after = json.loads(r["after_json"]) if r["after_json"] else {}
+        logs.append({
+            "changed_at": r["created_at"],
+            "old_text": before.get("text"),
+            "old_amount_cents": before.get("amount_cents"),
+            "new_text": after.get("text"),
+            "new_amount_cents": after.get("amount_cents"),
+        })
+    return logs
 
 
 def query(sql: str, params: tuple = ()) -> list[dict]:
@@ -170,13 +317,14 @@ def stats(year_month: str | None = None) -> dict:
         cats = con.execute(
             "select coalesce(category, '未分类') as category,"
             " sum(amount_cents) as total_cents, count(*) as count"
-            " from transactions where status = 'confirmed' and occurred_at like ?"
+            " from transactions where status = 'confirmed' and deleted_at is null"
+            " and occurred_at like ?"
             " group by category order by total_cents desc",
             (f"{ym}%",),
         ).fetchall()
         trend = con.execute(
             "select substr(occurred_at, 1, 7) as month, sum(amount_cents) as total_cents"
-            " from transactions where status = 'confirmed'"
+            " from transactions where status = 'confirmed' and deleted_at is null"
             " group by month order by month desc limit 6"
         ).fetchall()
         return {
@@ -196,7 +344,7 @@ def month_total(year_month: str | None = None) -> int:
     try:
         row = con.execute(
             "select coalesce(sum(amount_cents), 0) as total from transactions"
-            " where status = 'confirmed' and occurred_at like ?",
+            " where status = 'confirmed' and deleted_at is null and occurred_at like ?",
             (f"{ym}%",),
         ).fetchone()
         return int(row["total"])
