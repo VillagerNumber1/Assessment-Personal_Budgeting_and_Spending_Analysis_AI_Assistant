@@ -77,6 +77,7 @@
   <div class="notice">
     <b>这是看板娘的本地预览页，不是记账主页面。</b>
     页面外壳是照抄的，用来检查遮挡和位置；右下角的小人由 <code>waifu.js</code> 加载。
+    <b>可以用鼠标拖着小人走</b>，位置会记在这个浏览器的 localStorage 里，刷新还在。
     直接双击打开会被浏览器拦，请用 <code>preview.bat</code> 起本地服务器。
   </div>
 
@@ -127,12 +128,13 @@
     <div class="row">
       <button id="toggle">隐藏 / 显示</button>
       <button id="copy">复制位置配置</button>
+      <button id="reset">重置位置</button>
     </div>
 
     <div class="slider"><span class="label">X</span>
-      <input id="dx" type="range" min="-120" max="120" step="2" value="0"><b id="dxv">0</b></div>
+      <input id="dx" type="range" min="-600" max="120" step="2" value="-120"><b id="dxv">-120</b></div>
     <div class="slider"><span class="label">Y</span>
-      <input id="dy" type="range" min="-120" max="120" step="2" value="0"><b id="dyv">0</b></div>
+      <input id="dy" type="range" min="-400" max="120" step="2" value="0"><b id="dyv">0</b></div>
 
     <div class="probe">
       <button id="check">测一下四个镜像</button>
@@ -155,7 +157,7 @@
 
   Live2DWaifu.onStatus(function (s) {
     dot.className = "dot " + (dotClass[s.status] || "");
-    statusText.textContent = s.message;
+    statusText.textContent = s.enabled ? s.message : "已关闭（设置里关掉了），位置记录已清除";
   });
 
   // 台词按钮
@@ -165,22 +167,51 @@
 
   document.getElementById("toggle").addEventListener("click", function () { Live2DWaifu.toggle(); });
 
-  function applyNudge() {
-    var x = Number(dx.value), y = Number(dy.value);
-    dxv.textContent = x;
-    dyv.textContent = y;
-    Live2DWaifu.nudge(x, y);
+  // 预览页不受 1240px 限制：窗口小也照样加载，方便调位置
+  var FORMAL_MIN = Live2DWaifu.config.minWidth;
+  Live2DWaifu.config.minWidth = 0;
+  if (window.innerWidth < FORMAL_MIN) {
+    var warn = document.createElement("div");
+    warn.className = "notice";
+    warn.style.cssText = "background:#fdecec;border-color:#f3b0b0;color:#8a1f1f";
+    warn.innerHTML = "<b>注意：</b>当前窗口宽 " + window.innerWidth + "px，小于正式页门槛 " +
+      FORMAL_MIN + "px，正式页面里看板娘不会出现（这里为调位置强制显示）。";
+    document.querySelector("main").prepend(warn);
   }
-  dx.addEventListener("input", applyNudge);
-  dy.addEventListener("input", applyNudge);
+
+  var start = Live2DWaifu.getOffset();
+  dx.value = start.x;
+  dy.value = start.y;
+
+  function showOffset(p) {
+    dx.value = p.x;
+    dy.value = p.y;
+    dxv.textContent = p.x;
+    dyv.textContent = p.y;
+  }
+  showOffset(start);
+
+  function applySliders() {
+    showOffset(Live2DWaifu.setOffset(Number(dx.value), Number(dy.value), true));
+  }
+  dx.addEventListener("input", applySliders);
+  dy.addEventListener("input", applySliders);
+
+  // 鼠标拖完小人，滑块跟着走
+  document.addEventListener("live2d:offset", function (event) { showOffset(event.detail); });
 
   document.getElementById("copy").addEventListener("click", function () {
-    var snippet = "offset: { x: " + Number(dx.value) + ", y: " + Number(dy.value) + " }";
+    var p = Live2DWaifu.getOffset();
+    var snippet = "offset: { x: " + p.x + ", y: " + p.y + " }";
     navigator.clipboard.writeText(snippet).then(function () {
       statusText.textContent = "已复制：" + snippet;
     }, function () {
       statusText.textContent = snippet;
     });
+  });
+
+  document.getElementById("reset").addEventListener("click", function () {
+    showOffset(Live2DWaifu.resetOffset());
   });
 
   // 镜像体检
@@ -194,6 +225,9 @@
       }).join("");
     });
   });
+
+  // 预览页自己负责打开；记账页由「设置 → Live2D」那个开关来调
+  Live2DWaifu.setEnabled(true);
 })();
 </script>
 </body>

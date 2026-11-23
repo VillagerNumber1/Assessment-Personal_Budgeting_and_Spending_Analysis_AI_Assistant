@@ -4,6 +4,7 @@
   特点：
     - 纯前端，不碰 app.py、不新增接口、不进 Docker 镜像
     - 只从 CDN 拉代码和模型，仓库体积不变
+    - 默认不自启：由页面的 paintLive2d() 调 Live2DWaifu.setEnabled(true) 才加载
     - 任何一步失败都只 warn 一条，不影响记账、语音、查账、统计
     - 想让它说话：在业务代码里调 WaifuSay("记好啦")
   下面是 live2d/waifu.js 的完整内容，由 build-snippet.js 生成，不要在这里改。
@@ -12,23 +13,28 @@
 /*!
  * Live2D 看板娘 —— 记账小助手
  * ---------------------------------------------------------------
- * 一个文件干完三件事：
+ * 一个文件干完这些事：
  *   1. 从 CDN 依次尝试多个镜像，加载 L2Dwidget 3.x（Cubism 2 运行时）
  *   2. 挂上 npm 上的模型包（haru01），失败就安静地放弃
- *   3. 提供一个跟模型解耦的对话气泡：window.WaifuSay("记好啦")
+ *   3. 对话气泡（跟模型解耦）：window.WaifuSay("记好啦")
+ *   4. 鼠标拖动 + 位置记忆（localStorage），单击互动照旧
  *
  * 依赖（全部走 CDN，不进仓库、不进 Docker 镜像）：
  *   代码  live2d-widget@3.1.4            GPL-2.0
  *   模型  live2d-widget-model-haru@1.0.5 模型版权归原作者，仅学习演示用
  *
  * 对外接口：
- *   Live2DWaifu.start()        手动启动（默认自动启动）
- *   Live2DWaifu.say(text, ms)  说话（WaifuSay 是它的别名）
+ *   Live2DWaifu.setEnabled(bool)   开/关（记账页的 paintLive2d 调这个）
+ *   Live2DWaifu.say(text, ms)      说话（WaifuSay 是它的别名）
  *   Live2DWaifu.hide() / show() / toggle()
- *   Live2DWaifu.nudge(dx, dy)  微调位置（像素），不影响其他样式
- *   Live2DWaifu.state()        当前状态快照
- *   Live2DWaifu.onStatus(fn)   订阅状态变化，返回取消订阅函数
- *   Live2DWaifu.diagnose()     逐个探测镜像，返回 Promise<Array>
+ *   Live2DWaifu.getOffset()        读当前位置 {x, y}
+ *   Live2DWaifu.setOffset(x, y, persist)
+ *   Live2DWaifu.resetOffset()      回到默认位置并清掉本地记录
+ *   Live2DWaifu.state()            当前状态快照
+ *   Live2DWaifu.onStatus(fn)       订阅状态变化，返回取消订阅函数
+ *   Live2DWaifu.diagnose()         逐个探测镜像，返回 Promise<Array>
+ *
+ * 注意：默认不自启。必须有人调 setEnabled(true)，脚本才会去加载。
  */
 (function () {
   "use strict";
@@ -46,19 +52,109 @@
     scriptPath: "live2d-widget@3.1.4/lib/L2Dwidget.min.js",
     modelPath: "live2d-widget-model-haru@1.0.5/01/assets/haru01.model.json",
     display: { position: "right", width: 150, height: 300, hOffset: 0, vOffset: 0 },
-    // 在 display 之上再整体平移（像素，正数向右/向下）。调位置只改这里。
-    offset: { x: 0, y: 0 },
+    // 在 display 之上再整体平移（像素，正数向右/向下）。-120 是试出来的：让开右下角的设置按钮。
+    offset: { x: -120, y: 0 },
+    storageKey: "live2d.offset.v1",
+    // 窄于这个宽度就不加载：150×300 的画布 + (-120) 偏移，再窄就会压住正文右边缘的按钮。
+    // 1240 是算出来的：正文栏 680 居中，窗口 1240 时正文右边缘 960，小人左边缘 970。
+    minWidth: 1240,
+    drag: true,
+    dragThreshold: 4,
+    // 气泡锚点：从画布顶部往下挪多少像素再贴头顶。觉得高/低就改这个数（控制台也能改）
+    bubbleDropY: 60,
     mirrorTimeout: 7000,
     bubbleMs: 4200,
-    autoStart: true,
+    autoStart: false,
     // 点模型时随机说一句
     tapLines: ["别戳啦，快去记一笔～", "记账小助手在此！", "记不清花了多少？问我呀。"]
   };
 
-  var state = { status: "idle", base: null, message: "未启动" };
+  var state = { status: "idle", enabled: false, base: null, message: "未启动" };
+  var offset = readOffset();
   var listeners = [];
   var bubble = null;
   var hideTimer = 0;
+  var drag = null;
+  var suppressClick = false;
+
+  /* ---------------- 位置记忆 ---------------- */
+
+  function clampOffset(x, y) {
+    var vw = window.innerWidth || 1200;
+    var vh = window.innerHeight || 800;
+    var maxX = 80;
+    var maxY = 80;
+    var minX = -(vw - 90);
+    var minY = -(vh - 140);
+    return {
+      x: Math.round(Math.min(maxX, Math.max(minX, x))),
+      y: Math.round(Math.min(maxY, Math.max(minY, y)))
+    };
+  }
+
+  function readOffset() {
+    var fallback = { x: CFG.offset.x, y: CFG.offset.y };
+    try {
+      var raw = window.localStorage && window.localStorage.getItem(CFG.storageKey);
+      if (!raw) return fallback;
+      var saved = JSON.parse(raw);
+      if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+        return clampOffset(saved.x, saved.y);
+      }
+    } catch (err) { /* 隐私模式 / 坏数据：用默认值 */ }
+    return fallback;
+  }
+
+  function saveOffset() {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(CFG.storageKey, JSON.stringify(offset));
+      }
+    } catch (err) { /* 存不了就算了，不打断拖拽 */ }
+  }
+
+  function applyOffset() {
+    var el = document.getElementById("live2d-widget");
+    if (el) el.style.transform = "translate(" + offset.x + "px," + offset.y + "px)";
+  }
+
+  // init 之后容器是同步创建的，但保险起见还是等一下
+  function applyOffsetWhenReady() {
+    var tries = 0;
+    (function attempt() {
+      if (document.getElementById("live2d-widget")) { applyOffset(); return; }
+      if (tries++ < 20) setTimeout(attempt, 100);
+    })();
+  }
+
+  function setOffset(x, y, persist) {
+    var next = clampOffset(Number(x) || 0, Number(y) || 0);
+    offset = next;
+    applyOffset();
+    notifyOffset();
+    if (persist) saveOffset();
+    return { x: offset.x, y: offset.y };
+  }
+
+  function resetOffset() {
+    offset = clampOffset(CFG.offset.x, CFG.offset.y);
+    applyOffset();
+    notifyOffset();
+    try {
+      if (window.localStorage) window.localStorage.removeItem(CFG.storageKey);
+    } catch (err) { /* 忽略 */ }
+    return { x: offset.x, y: offset.y };
+  }
+
+  // 让页面（调试面板之类）能感知拖动后的位置变化
+  function notifyOffset() {
+    if (bubble && bubble.classList.contains("on")) placeBubble(bubble);
+    try {
+      if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
+        document.dispatchEvent(new CustomEvent("live2d:offset", { detail: { x: offset.x, y: offset.y } }));
+      }
+    } catch (err) { /* 老浏览器没有 CustomEvent，不影响拖拽 */ }
+  }
 
   /* ---------------- 状态 ---------------- */
 
@@ -86,19 +182,23 @@
     var css = document.createElement("style");
     css.id = "waifu-style";
     css.textContent = [
-      /* 看板娘压在页面内容之上，但必须低于弹层 */
+      /* 看板娘压在页面内容之上，但必须低于弹层和右下角的设置按钮 */
       "#live2d-widget{position:fixed!important;z-index:3!important;pointer-events:none!important;}",
-      "#live2d-widget canvas{pointer-events:auto!important;cursor:pointer;}",
-      /* 编辑 / 金额确认弹层要盖住看板娘（原样式没写 z-index，这里补上） */
+      "#live2d-widget canvas{pointer-events:auto!important;cursor:grab;touch-action:none;}",
+      /* 编辑 / 设置 / 金额确认弹层要盖住看板娘（原样式没写 z-index，这里补上） */
       ".mask{z-index:9000!important;}",
-      /* 对话气泡：不吃点击、不挡输入框 */
-      "#waifu-bubble{position:fixed;right:168px;bottom:196px;z-index:4;max-width:230px;",
+      /* 对话气泡：位置由 JS 按小人实时算，不写死 right/bottom；不吃点击、不挡输入框 */
+      "#waifu-bubble{position:fixed;left:0;top:0;z-index:4;max-width:230px;",
       "padding:9px 12px;border-radius:12px;background:#fff;color:#1f2933;font-size:13px;line-height:1.55;",
       "box-shadow:0 6px 20px rgba(16,24,40,.14);border:1px solid #e6ebf3;pointer-events:none;",
       "opacity:0;transform:translateY(6px);transition:opacity .18s ease,transform .18s ease;}",
       "#waifu-bubble.on{opacity:1;transform:translateY(0);}",
-      "#waifu-bubble::after{content:'';position:absolute;right:26px;bottom:-6px;width:12px;height:12px;",
+      "#waifu-bubble::after{content:'';position:absolute;left:50%;margin-left:-6px;bottom:-6px;width:12px;height:12px;",
       "background:#fff;border-right:1px solid #e6ebf3;border-bottom:1px solid #e6ebf3;transform:rotate(45deg);}",
+      /* 深色主题 */
+      '[data-theme="dark"] #waifu-bubble{background:#2a2a2a;color:#e8e8e8;border-color:#3a3a3a;',
+      "box-shadow:0 6px 20px rgba(0,0,0,.45);}",
+      '[data-theme="dark"] #waifu-bubble::after{background:#2a2a2a;border-color:#3a3a3a;}',
       /* 窄屏直接不显示，避免挡住输入框 */
       "@media (max-width:767px){#live2d-widget,#waifu-bubble{display:none!important;}}"
     ].join("");
@@ -122,9 +222,36 @@
     if (state.status === "failed") return; // 模型都没了，别留一句孤零零的话
     var el = ensureBubble();
     el.textContent = String(text);
+    placeBubble(el); // 先按小人当前位置摆好，再显示
     el.classList.add("on");
     clearTimeout(hideTimer);
     hideTimer = setTimeout(function () { el.classList.remove("on"); }, ms || CFG.bubbleMs);
+  }
+
+  // 气泡跟着小人走：贴在头顶，左右不出屏
+  function placeBubble(el) {
+    var vw = window.innerWidth || 1200;
+    var vh = window.innerHeight || 800;
+    var width = el.offsetWidth || 200;
+    var height = el.offsetHeight || 40;
+    var left;
+    var top;
+    var host = document.getElementById("live2d-widget");
+
+    if (host && typeof host.getBoundingClientRect === "function") {
+      var rect = host.getBoundingClientRect();
+      left = rect.left + rect.width / 2 - width / 2;
+      // 画布顶部到头顶之间有一段空白，往下挪 bubbleDropY 再贴着头
+      top = rect.top + CFG.bubbleDropY - height - 8;
+    } else {
+      left = vw - 168 - width;
+      top = vh - 196 - height;
+    }
+
+    left = Math.max(8, Math.min(vw - width - 8, left));
+    top = Math.max(8, Math.min(vh - height - 8, top));
+    el.style.left = Math.round(left) + "px";
+    el.style.top = Math.round(top) + "px";
   }
 
   /* ---------------- 载入 ---------------- */
@@ -182,7 +309,7 @@
     }
 
     setStatus("running", "已加载 · " + hostOf(base), base);
-    applyOffset(CFG.offset.x, CFG.offset.y);
+    applyOffsetWhenReady();
 
     // L2Dwidget.init 有的版本不返回 Promise，所以两种都兼容
     if (result && typeof result.then === "function") {
@@ -209,40 +336,97 @@
   }
 
   function start() {
-    // 加载中 / 已加载就不重复点，失败后允许再试一次
+    if (!state.enabled) return;
     if (state.status === "loading" || state.status === "running") return;
-    injectStyle();
-    if (window.innerWidth < 768) {
-      setStatus("idle", "窄屏，看板娘不加载");
+    if (window.innerWidth < CFG.minWidth) {
+      setStatus("idle", "窗口太窄（<" + CFG.minWidth + "px），看板娘先不加载");
+      console.info("[live2d] 窗口宽度 " + window.innerWidth + "px < " + CFG.minWidth + "px，看板娘不加载");
       return;
     }
     if (!window.WebGLRenderingContext) {
       setStatus("failed", "浏览器不支持 WebGL");
       return;
     }
+    injectStyle();
     tryMirror(0);
   }
 
-  /* ---------------- 位置 / 显隐 ---------------- */
+  function setEnabled(on) {
+    var next = !!on;
+    if (next === state.enabled) {
+      if (next) start(); // 失败后又被打开，再试一次
+      return;
+    }
+    state.enabled = next;
 
-  function moveTo(el, dx, dy) {
-    el.style.transform = "translate(" + (dx || 0) + "px," + (dy || 0) + "px)";
+    if (!next) {
+      setVisible(false);
+      if (bubble) bubble.classList.remove("on");
+      // 关掉就忘掉位置：否则再打开时容器会被重新定位，一拖又跳回旧位置
+      resetOffset();
+      emit();
+      return;
+    }
+
+    // 已经 init 过就只负责显示，别重复 init（会多出一个画布）
+    if (state.status === "failed") state.status = "idle";
+    setVisible(true);
+    applyOffset();
+    start();
   }
 
-  // init 之后容器是同步创建的，但保险起见还是等一下
-  function applyOffset(x, y) {
-    var tries = 0;
-    (function attempt() {
-      var el = document.getElementById("live2d-widget");
-      if (el) { moveTo(el, x, y); return; }
-      if (tries++ < 20) setTimeout(attempt, 100);
-    })();
+  /* ---------------- 拖动 / 显隐 ---------------- */
+
+  function onPointerDown(event) {
+    suppressClick = false;
+    if (!CFG.drag) return;
+    if (!event.target || event.target.id !== "live2dcanvas") return;
+    if (event.button !== undefined && event.button !== 0) return;
+    if (!state.enabled) return;
+
+    drag = {
+      x0: event.clientX,
+      y0: event.clientY,
+      ox: offset.x,
+      oy: offset.y,
+      moved: false,
+      canvas: event.target
+    };
+    drag.canvas.style.cursor = "grabbing";
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
   }
 
-  function nudge(dx, dy) {
-    var el = document.getElementById("live2d-widget");
-    if (!el) return;
-    moveTo(el, dx, dy);
+  function onPointerMove(event) {
+    if (!drag) return;
+    var dx = event.clientX - drag.x0;
+    var dy = event.clientY - drag.y0;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < CFG.dragThreshold) return;
+
+    drag.moved = true;
+    offset = clampOffset(drag.ox + dx, drag.oy + dy);
+    applyOffset();
+    notifyOffset();
+    if (event.cancelable) event.preventDefault();
+    if (document.body) document.body.style.userSelect = "none";
+  }
+
+  function onPointerUp() {
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerUp);
+    if (!drag) return;
+
+    var moved = drag.moved;
+    if (drag.canvas) drag.canvas.style.cursor = "";
+    drag = null;
+    if (document.body) document.body.style.userSelect = "";
+
+    if (moved) {
+      suppressClick = true;
+      saveOffset();
+    }
   }
 
   function setVisible(visible) {
@@ -290,6 +474,8 @@
   window.Live2DWaifu = {
     config: CFG,
     start: start,
+    setEnabled: setEnabled,
+    isEnabled: function () { return state.enabled; },
     say: say,
     hide: function () { setVisible(false); },
     show: function () { setVisible(true); },
@@ -297,8 +483,18 @@
       var el = document.getElementById("live2d-widget");
       setVisible(!el || el.style.display === "none");
     },
-    nudge: nudge,
-    state: function () { return { status: state.status, base: state.base, message: state.message }; },
+    getOffset: function () { return { x: offset.x, y: offset.y }; },
+    setOffset: setOffset,
+    resetOffset: resetOffset,
+    state: function () {
+      return {
+        status: state.status,
+        enabled: state.enabled,
+        base: state.base,
+        message: state.message,
+        offset: { x: offset.x, y: offset.y }
+      };
+    },
     onStatus: function (fn) {
       listeners.push(fn);
       try { fn(state); } catch (err) { console.warn(err); }
@@ -313,18 +509,33 @@
   // 业务代码里更短的名字
   window.WaifuSay = say;
 
-  // 点一下模型，说句话
+  // 单击互动：拖完的那一下不再触发；没拖动就照旧说句话
   document.addEventListener("click", function (event) {
+    if (suppressClick) {
+      suppressClick = false;
+      if (event.target && event.target.id === "live2dcanvas") {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+      return;
+    }
     if (!event.target || event.target.tagName !== "CANVAS" || event.target.id !== "live2dcanvas") return;
     var lines = CFG.tapLines;
     say(lines[Math.floor(Math.random() * lines.length)]);
+  }, true);
+
+  document.addEventListener("pointerdown", onPointerDown, { passive: true });
+
+  // 窗口尺寸变了，气泡要重新贴到小人头顶
+  window.addEventListener("resize", function () {
+    if (bubble && bubble.classList.contains("on")) placeBubble(bubble);
   });
 
   if (CFG.autoStart) {
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", start);
+      document.addEventListener("DOMContentLoaded", function () { setEnabled(true); });
     } else {
-      start();
+      setEnabled(true);
     }
   }
 })();
