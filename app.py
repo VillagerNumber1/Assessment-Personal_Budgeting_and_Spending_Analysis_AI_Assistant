@@ -9,6 +9,7 @@ r"""记账服务的后端：一个常驻程序，监听端口，回答浏览器�
 
 这个文件只负责"把网址接到函数上"，真正的活都在 storage.py 里。
 """
+import re
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -21,10 +22,12 @@ from pydantic import BaseModel
 
 import asr
 import audio_effectsRecovery as audio_fx
+import llm
 import parser
 import query
+import settings as runtime
 import storage
-from config import DATA_DIR
+from config import DATA_DIR, DEEPSEEK_API_KEY
 
 TEMPLATES = Path(__file__).parent / "templates"
 UPLOAD_DIR = DATA_DIR / "uploads"
@@ -32,6 +35,9 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 MAX_AMOUNT_CENTS = 10_000_000     # 超过 10 万要二次确认
 HARD_MAX_CENTS = 100_000_000      # 超过 100 万直接拒绝（确认了也不行）
 MAX_TEXT_LEN = 200
+
+# 一句话里可能有好几笔，按这些标点拆开
+CLAUSE_SPLIT = re.compile(r"[，,。；;、\n]+")
 
 
 @asynccontextmanager
@@ -68,15 +74,30 @@ class QueryRequest(BaseModel):
     question: str
 
 
+class SettingsBody(BaseModel):
+    asr_backend: str | None = None
+    api_key: str | None = None          # 传空字符串 = 清空；不传 = 不改
+
+
 _transcriber = None
 
 
+def current_key() -> str:
+    """设置面板里填的 key 优先，其次是 .env 里的。"""
+    return runtime.api_key() or DEEPSEEK_API_KEY
+
+
 def get_transcriber():
-    """第一次用到时再初始化，没配 key 也不会拖垮整个服务启动。"""
+    """第一次用到时再初始化；换后端或换 key 时会被重置，下一次识别就用新的。"""
     global _transcriber
     if _transcriber is None:
-        _transcriber = asr.create_transcriber()
+        _transcriber = asr.create_transcriber(runtime.asr_backend(), current_key() or None)
     return _transcriber
+
+
+def reset_transcriber() -> None:
+    global _transcriber
+    _transcriber = None
 
 
 def check_amount(amount: int | None, confirm_large: bool = False) -> None:
@@ -114,6 +135,39 @@ def index() -> FileResponse:
 def sound_manifest() -> dict:
     """告诉前端有哪些音效可用。没有的就是 null，前端会跳过播放继续录音。"""
     return audio_fx.manifest()
+
+
+@app.get("/api/settings")
+def read_settings() -> dict:
+    """给设置面板用的状态。**只回脱敏后的 key**，完整 key 永远不出后端。"""
+    data = runtime.load()
+    key = current_key()
+    data.pop("api_key", None)
+    data["has_key"] = bool(key)
+    data["key_hint"] = runtime.mask_key(key)
+    return data
+
+
+@app.post("/api/settings")
+def write_settings(body: SettingsBody) -> dict:
+    """改设置。改完立刻重置识别器，下一次录音就用新的，不用重启。"""
+    if body.asr_backend not in (None, "local", "cloud", "auto"):
+        raise HTTPException(status_code=400, detail="asr_backend 只能是 local / cloud / auto")
+    if body.api_key is not None and len(body.api_key) > 200:
+        raise HTTPException(status_code=400, detail="key 太长了")
+
+    updates: dict = {"asr_backend": body.asr_backend}
+    if body.api_key is not None:
+        updates["api_key"] = body.api_key.strip()
+    runtime.save(updates)
+    reset_transcriber()
+
+    data = runtime.load()
+    key = current_key()
+    data.pop("api_key", None)
+    data["has_key"] = bool(key)
+    data["key_hint"] = runtime.mask_key(key)
+    return data
 
 
 @app.get("/api/stats")
@@ -154,36 +208,84 @@ def list_transactions(limit: int = 50) -> list[dict]:
     return storage.list_recent(limit)
 
 
+def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
+    """解析一段文字（整句或一个分句），返回统一结构。
+
+    budget 是个只有一项的列表：一次请求里最多问几次模型，
+    防止「一句话拆出五段」就调五次接口。
+    """
+    p = parser.parse(text)
+    amount = fallback.amount_cents if fallback.amount_cents is not None else p["amount_cents"]
+    category = fallback.category or p["category"]
+    occurred = fallback.occurred_at or p["occurred_at"]
+    used_llm = False
+
+    if (amount is None or category is None) and budget[0] > 0 and current_key():
+        guess = llm.parse_text(text, current_key())
+        budget[0] -= 1
+        if guess:
+            used_llm = True
+            amount = amount if amount is not None else guess["amount_cents"]
+            category = category or guess["category"]
+
+    return {"text": text, "amount": amount, "occurred": occurred,
+            "category": category, "hits": p["hits"], "llm": used_llm}
+
+
+def _pack(item: dict, new_id: int) -> dict:
+    return {
+        "id": new_id,
+        "parsed": {
+            "amount_cents": item["amount"],
+            "amount_yuan": storage.yuan(item["amount"]),
+            "occurred_at": item["occurred"],
+            "category": item["category"],
+            "hits": item["hits"],
+            "llm": item["llm"],
+        },
+    }
+
+
 @app.post("/api/transactions")
 def create_transaction(tx: NewTransaction) -> dict:
-    """存一条账。没给金额/日期/类别时，用规则从原话里猜。"""
+    """存账。一句话里有多笔消费就按标点拆开，各存一条。
+
+    例：「昨天打车32，今天吃饭15」→ 两条账。
+    分句里没有金额的（「和同事AA」）直接跳过，不产生垃圾数据。
+    """
     if len(tx.text) > MAX_TEXT_LEN:
         raise HTTPException(status_code=400, detail=f"这句话太长了（最多 {MAX_TEXT_LEN} 字）")
 
-    parsed = parser.parse(tx.text)
-    amount = tx.amount_cents if tx.amount_cents is not None else parsed["amount_cents"]
-    occurred = tx.occurred_at or parsed["occurred_at"]
-    category = tx.category or parsed["category"]
+    budget = [2]
+    clauses = [c.strip() for c in CLAUSE_SPLIT.split(tx.text) if c.strip()]
 
-    # 校验层：不管金额是用户传的还是解析出来的，都必须过这一关
-    check_amount(amount, tx.confirm_large)
+    # 只有「没显式给金额」时才拆句；给了金额说明调用方自己决定好了一笔
+    if tx.amount_cents is None and len(clauses) > 1:
+        items = []
+        for clause in clauses:
+            item = _resolve(clause, tx, budget)
+            if item["amount"] is None:
+                continue                      # 没金额的分句不记
+            check_amount(item["amount"], tx.confirm_large)
+            try:
+                new_id = storage.add(item["text"], item["amount"],
+                                     item["occurred"], item["category"])
+            except sqlite3.Error as exc:
+                raise HTTPException(status_code=500, detail=f"写入失败：{exc}") from exc
+            items.append(_pack(item, new_id))
 
+        if items:
+            return {"ok": True, "multi": True, "items": items}
+
+    # 拆不开，或者拆出来一笔带金额的都没有 —— 按整句存一条
+    item = _resolve(tx.text, tx, budget)
+    check_amount(item["amount"], tx.confirm_large)
     try:
-        new_id = storage.add(tx.text, amount, occurred, category)
-    except sqlite3.Error as exc:            # 数据库写不进去，别让服务崩
+        new_id = storage.add(item["text"], item["amount"], item["occurred"], item["category"])
+    except sqlite3.Error as exc:
         raise HTTPException(status_code=500, detail=f"写入失败：{exc}") from exc
 
-    return {
-        "ok": True,
-        "id": new_id,
-        "parsed": {
-            "amount_cents": amount,
-            "amount_yuan": storage.yuan(amount),
-            "occurred_at": occurred,
-            "category": category,
-            "hits": parsed["hits"],
-        },
-    }
+    return {"ok": True, "id": new_id, "parsed": _pack(item, new_id)["parsed"]}
 
 
 @app.patch("/api/transactions/{tx_id}")
