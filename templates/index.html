@@ -5,21 +5,90 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>记账小助手</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --muted:#8a94a6; --accent:#2f7cf6; --red:#e5484d; }
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --muted:#8a94a6; --accent:#2f7cf6; --red:#e5484d;
+        --income:#ffd54a; }   /* 卡片的「本月收入」和列表里的收入用同一个黄 */
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:15px/1.6 "Microsoft YaHei","微软雅黑","PingFang SC",system-ui,sans-serif; }
   main { max-width:680px; margin:0 auto; padding:24px 16px 64px; }
 
-  .topbar { display:flex; align-items:baseline; gap:10px; margin:0 2px 14px; }
-  .topbar h1 { margin:0; font-size:20px; letter-spacing:.5px; }
-  .topbar .tag { font-size:12px; color:var(--muted); }
+  /* 标题 + 搜索框 + 查账结果用同一套网格：结果和搜索框左边缘对齐，不跟整页左对齐 */
+  .topwrap { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:14px;
+             row-gap:8px; align-items:center; margin:0 2px 14px; }
+  .topbar { display:contents; }
+  .topbar .brand { grid-column:1; display:flex; align-items:baseline; gap:8px; }
+  .topbar h1 { margin:0; font-size:20px; letter-spacing:.5px; white-space:nowrap; }
+  .topbar .tag { font-size:12px; color:var(--muted); white-space:nowrap; }
+  /* 标题右边的查账框：框内右侧放大镜 */
+  .topbar .search { grid-column:2; min-width:0; margin:0; display:flex; }
+  .field { position:relative; flex:1; min-width:0; display:flex; }
+  .topbar .search .field input { width:100%; padding:9px 38px 9px 14px; font-size:14px;
+                                 border:1px solid #e2e6ee; border-radius:999px;
+                                 background:var(--card); outline:none; }
+  .topbar .search .field input:focus { border-color:var(--accent); }
+  .in-search { position:absolute; right:4px; top:50%; transform:translateY(-50%);
+               border:0; background:none; cursor:pointer; color:var(--muted);
+               padding:6px; display:flex; align-items:center; border-radius:50%; }
+  .in-search:hover { color:var(--accent); background:rgba(47,124,246,.08); }
+  /* 从记账框转去查账时闪两下：粉色 + 大扩散，一眼能看见 */
+  @keyframes qflash {
+    0%   { box-shadow:0 0 0 0 rgba(236,72,153,0); border-color:#e2e6ee; }
+    10%  { box-shadow:0 0 0 10px rgba(236,72,153,.55), 0 0 22px 6px rgba(236,72,153,.45);
+           border-color:#ec4899; }
+    50%  { box-shadow:0 0 0 0 rgba(236,72,153,0); border-color:#e2e6ee; }
+    60%  { box-shadow:0 0 0 10px rgba(236,72,153,.55), 0 0 22px 6px rgba(236,72,153,.45);
+           border-color:#ec4899; }
+    100% { box-shadow:0 0 0 0 rgba(236,72,153,0); border-color:#e2e6ee; }
+  }
+  .topbar .search .field input.flash { animation:qflash 2s ease-in-out 1; }
+  /* 查账结果跟搜索框同一列 */
+  .qresult { grid-column:2; min-width:0; }
+  .qresult .qanswer { font-size:14px; line-height:1.5; color:var(--ink); }
+  @media (max-width: 720px) {
+    .topwrap { grid-template-columns:minmax(0,1fr); }
+    .topbar .brand, .topbar .search, .qresult { grid-column:1; }
+    .topbar .tag { display:none; }
+  }
 
-  .total-card { background:linear-gradient(135deg,#2f7cf6,#5b9bff); color:#fff;
-                border-radius:16px; padding:22px 24px; box-shadow:0 8px 24px rgba(47,124,246,.25); }
-  .total-card .label { opacity:.85; font-size:13px; letter-spacing:.5px; }
-  .total-card .num { font-size:40px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.2; }
-  .total-card .month { opacity:.8; font-size:13px; }
+  .total-card { background:linear-gradient(135deg,#2f7cf6,#5b9bff); color:#fff; position:relative;
+                border-radius:16px; padding:20px 24px; box-shadow:0 8px 24px rgba(47,124,246,.25); }
+  /* 月份这一行：‹ 2026 年 11 月 ›  点月份能直接切年月 */
+  .month-row { display:flex; align-items:center; gap:6px; margin-bottom:14px; }
+  .month-row .month { font-size:17px; font-weight:600; opacity:.92; letter-spacing:1px;
+                      background:none; border:0; color:#fff; cursor:pointer; padding:2px 6px;
+                      border-radius:8px; font-family:inherit; }
+  .month-row .month:hover { background:rgba(255,255,255,.16); }
+  .mon-nav { border:0; background:rgba(255,255,255,.14); color:#fff; cursor:pointer;
+             width:26px; height:26px; border-radius:50%; font-size:15px; line-height:1;
+             display:flex; align-items:center; justify-content:center; }
+  .mon-nav:hover { background:rgba(255,255,255,.3); }
+  /* 自绘年月面板 */
+  .month-pop { position:absolute; top:56px; left:24px; z-index:20; width:236px;
+               background:#fff; color:var(--ink); border-radius:14px; padding:10px 12px 12px;
+               box-shadow:0 12px 32px rgba(15,23,42,.22); }
+  .month-pop[hidden] { display:none; }
+  .mp-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .mp-head #mpYear { font-weight:700; font-size:15px; }
+  .mp-head .mon-nav { background:#eef4ff; color:var(--accent); }
+  .mp-head .mon-nav:hover { background:#dbe8ff; }
+  .mp-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+  .mp-grid button { border:0; background:#f4f6fa; color:var(--ink); border-radius:9px;
+                    padding:8px 0; font-size:13px; cursor:pointer; font-family:inherit; }
+  .mp-grid button:hover { background:#e6eefc; }
+  .mp-grid button.on { background:var(--accent); color:#fff; }
+  [data-theme="dark"] .month-pop { background:#2f2f2f; }
+  [data-theme="dark"] .mp-head .mon-nav { background:#3a3a3a; color:#9ec1ff; }
+  [data-theme="dark"] .mp-grid button { background:#3a3a3a; color:#e8e8e8; }
+  [data-theme="dark"] .mp-grid button.on { background:var(--accent); color:#fff; }
+  .figures { display:flex; gap:16px; }
+  .fig { flex:1; min-width:0; }
+  .fig .label { opacity:.82; font-size:12px; letter-spacing:.5px; margin-bottom:2px; }
+  .fig .num { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums;
+              line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* 收入固定用黄色（两个主题都是这块蓝底，所以只有一个黄） */
+  .fig .num.income { color:var(--income); }
+  /* 结余：没钱（负数）绿色，有钱（正数）白色 */
+  .fig .num.neg { color:#4ade80; }
 
   .entry { display:flex; gap:8px; margin:18px 0 6px; }
   .entry input { flex:1; padding:12px 14px; border:1px solid #e2e6ee; border-radius:12px;
@@ -45,7 +114,9 @@
   .row { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
   .cat { font-size:12px; color:var(--accent); background:rgba(47,124,246,.1);
          padding:2px 8px; border-radius:999px; }
-  .amt { font-weight:700; font-variant-numeric:tabular-nums; color:var(--red); }
+  /* 支出用正文色（白天黑 / 黑夜白），收入用黄色系——浅色底上纯黄看不清，所以浅色主题用深琥珀 */
+  .amt { font-weight:700; font-variant-numeric:tabular-nums; color:var(--ink); }
+  .amt.income { color:var(--income); }
   .row2 { display:flex; justify-content:space-between; gap:12px; margin-top:2px; align-items:center; }
   .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .meta { color:var(--muted); font-size:12px; white-space:nowrap; flex:none;
@@ -131,6 +202,9 @@
   .ops .kind.create { background:#e8f5ec; color:#16a34a; }
   .ops .kind.delete { background:#fdecec; color:#e5484d; }
   .ops .kind.edit { background:#eef4ff; color:#2f7cf6; }
+  .ops .kind.query { background:#fdf2f8; color:#db2777; }   /* 查账历史用粉色，跟操作分开 */
+  /* 历史记录顶上那句说明：灰色小字，别抢列表的注意力 */
+  .ops-note { margin:-4px 0 8px; font-size:12px; line-height:1.5; color:var(--muted); }
   .ops .txt { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ops .undo { border:1px solid #e2e6ee; background:#fff; border-radius:8px;
                font-size:11px; padding:2px 8px; cursor:pointer; color:#64748b; }
@@ -178,7 +252,6 @@
   /* 主按钮在暗色下必须还是蓝底白字，别变白 */
   [data-theme="dark"] .entry > button[type="submit"],
   [data-theme="dark"] .entry #send,
-  [data-theme="dark"] .entry #qsend,
   [data-theme="dark"] .dialog .actions .primary {
     background:var(--accent); border-color:var(--accent); color:#fff;
   }
@@ -209,6 +282,8 @@
   .dialog label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
   .dialog input { width:100%; padding:10px 12px; border:1px solid #e2e6ee; border-radius:10px; font-size:15px; }
   .dialog .err { min-height:18px; margin-top:10px; font-size:13px; color:var(--red); }
+  .when-row { display:flex; gap:10px; }
+  .when-row > div { flex:1; min-width:0; }
   .dialog .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
   .dialog .actions button { padding:8px 16px; border-radius:10px; border:1px solid #e2e6ee; background:#fff; cursor:pointer; }
   .dialog .actions .primary { background:var(--accent); border-color:var(--accent); color:#fff; }
@@ -217,22 +292,70 @@
 </head>
 <body>
 <main>
-  <header class="topbar">
-    <h1>记账小助手</h1>
-    <span class="tag">一句话记一笔</span>
-  </header>
+  <div class="topwrap">
+    <header class="topbar">
+      <div class="brand">
+        <h1>记账小助手</h1>
+        <span class="tag">一句话记一笔</span>
+      </div>
+      <form class="search" id="qform">
+        <div class="field">
+          <input id="qtext" placeholder="查账：上个月吃饭花了多少" autocomplete="off">
+          <button type="submit" id="searchBtn" class="in-search" title="查账">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="1.9" stroke-linecap="round">
+              <circle cx="10.5" cy="10.5" r="6"/>
+              <path d="M15.2 15.2 20 20"/>
+            </svg>
+          </button>
+        </div>
+      </form>
+    </header>
 
-  <div class="total-card">
-    <div class="label">本月支出</div>
-    <div class="num">¥<span id="total">0.00</span></div>
-    <div class="month" id="month"></div>
+    <div class="qresult" id="qresult" hidden>
+      <div class="qanswer" id="qanswer"></div>
+      <div class="dsl" id="qdsl"></div>
+    </div>
   </div>
 
+  <div class="total-card">
+    <div class="month-row">
+      <button type="button" class="mon-nav" id="prevMonth" title="上个月">‹</button>
+      <button type="button" class="month" id="month" title="点一下切换月份"></button>
+      <button type="button" class="mon-nav" id="nextMonth" title="下个月">›</button>
+      <!-- 自绘年月面板：没有「清除」，也不能键盘乱输 -->
+      <div class="month-pop" id="monthPop" hidden>
+        <div class="mp-head">
+          <button type="button" class="mon-nav" id="mpPrevYear">‹</button>
+          <span id="mpYear"></span>
+          <button type="button" class="mon-nav" id="mpNextYear">›</button>
+        </div>
+        <div class="mp-grid" id="mpGrid"></div>
+      </div>
+    </div>
+    <div class="figures">
+      <div class="fig">
+        <div class="label">本月支出</div>
+        <div class="num" id="expenseNum">¥0.00</div>
+      </div>
+      <div class="fig">
+        <div class="label">本月收入</div>
+        <div class="num income" id="incomeNum">¥0.00</div>
+      </div>
+      <div class="fig">
+        <div class="label">本月结余</div>
+        <div class="num" id="balanceNum">¥0.00</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 记账框：恢复原样，一个宽输入框 + 记一笔 + 录音 -->
   <form class="entry" id="form">
-    <input id="text" placeholder="说一句话，比如「昨天打车32」" autocomplete="off" autofocus>
+    <input id="text" placeholder="记账：比如「昨天打车32」" autocomplete="off" autofocus>
     <button id="send" type="submit">记一笔</button>
     <button id="mic" type="button" class="mic" title="点一下开始录音，再点一下结束">🎤</button>
   </form>
+
   <div class="recrow" id="recrow" hidden>
     <div class="recbar"><div class="recfill" id="recfill"></div></div>
     <span class="rectime" id="rectime">0.0 / 60s</span>
@@ -240,17 +363,7 @@
   <div class="hint" id="hint"></div>
 
   <section class="panel">
-    <h3>问问看</h3>
-    <form class="entry" id="qform" style="margin:0 0 8px">
-      <input id="qtext" placeholder="比如「上个月吃饭花了多少」" autocomplete="off">
-      <button id="qsend" type="submit">问</button>
-    </form>
-    <div class="hint" id="qanswer" style="min-height:20px"></div>
-    <div class="dsl" id="qdsl"></div>
-  </section>
-
-  <section class="panel">
-    <h3>这个月花在哪</h3>
+    <h3 id="catsTitle">这个月花在哪</h3>
     <div class="spend-note" id="spendNote" hidden></div>
     <div id="cats"></div>
     <h3 style="margin:16px 0 6px">近 6 个月</h3>
@@ -272,6 +385,16 @@
     <input id="editText" autocomplete="off">
     <label for="editAmount">金额（元）</label>
     <input id="editAmount" type="number" step="0.01" min="0" inputmode="decimal">
+    <div class="when-row">
+      <div>
+        <label for="editDate">日期</label>
+        <input id="editDate" type="date" min="1970-01-01">
+      </div>
+      <div>
+        <label for="editTime">时间</label>
+        <input id="editTime" type="time">
+      </div>
+    </div>
     <div class="err" id="editErr"></div>
     <div class="actions">
       <button type="button" id="editCancel">取消</button>
@@ -377,6 +500,7 @@
         </section>
 
         <section class="pane" id="pane-history" hidden>
+          <div class="ops-note">* 做过的事和问过的话都在这里。查过的句子点「查询」可以重查一次。</div>
           <ul class="ops" id="opsList"><li class="muted">加载中…</li></ul>
         </section>
       </div>
@@ -461,7 +585,7 @@ function toast(msg, ok = true) {
 }
 
 async function loadStats() {
-  const d = await (await fetch("/api/stats")).json();
+  const d = await (await fetch("/api/stats?month=" + viewMonth)).json();
 
   const max = Math.max(1, ...d.by_category.map((c) => c.total_cents || 0));
   $("cats").innerHTML = d.by_category.length
@@ -471,7 +595,7 @@ async function loadStats() {
           <span class="bar-track"><span class="bar-fill" style="width:${((c.total_cents || 0) / max * 100).toFixed(1)}%"></span></span>
           <span class="bar-val">¥${yuan(c.total_cents)}</span>
         </div>`).join("")
-    : '<div class="empty" style="padding:10px 0">这个月还没有支出</div>';
+    : `<div class="empty" style="padding:10px 0">${monthName()} 没有支出</div>`;
 
   const tmax = Math.max(1, ...d.trend.map((t) => t.total_cents || 0));
   $("trend").innerHTML = d.trend.length
@@ -482,29 +606,43 @@ async function loadStats() {
         </div>`).join("")
     : '<div class="empty" style="padding:10px 0">还没有数据</div>';
 
+  // 标题跟着看的是哪个月变，别让人以为永远在说「这个月」
+  $("catsTitle").textContent = isThisMonth() ? "这个月花在哪" : `${monthName()} 花在哪`;
   paintSpendNote(d);
 }
 
 /* 本月 vs 上月的结论：先落到页面上（关掉看板娘也一定看得见），
    看板娘只是把同一句话说出口。
-   注意：比的是「本月累计」和「上月整月」，不是同期——所以话要说准，不能写「同期」。 */
+   - 看的是「当前这个月」时：比本月累计和上月整月，所以话不能说成「同期」
+   - 看的是历史月份时：两边都是整月，直接说「比上月多/少 X%」 */
 function paintSpendNote(d) {
   const note = $("spendNote");
-  const now = new Date();
-  const day = now.getDate();
-  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevYm = prev.getFullYear() + "-" + String(prev.getMonth() + 1).padStart(2, "0");
   const cur = d.total_cents || 0;
+  const prevYm = shiftMonthStr(viewMonth, -1);
   const row = (d.trend || []).find((t) => t.month === prevYm);
   const pre = row ? (row.total_cents || 0) : 0;
 
   spendWarn = "";
+  const day = new Date().getDate();
   // 月初几天没有可比性；上月没账（或被删光）也没有基准——宁可不说，也别瞎比
-  if (day < 5 || !cur || !pre) { note.hidden = true; return; }
+  if ((isThisMonth() && day < 5) || !cur || !pre) { note.hidden = true; return; }
+
+  note.hidden = false;
+  if (!isThisMonth()) {
+    // 历史月份：整月对整月，说什么都准确
+    const pct = Math.round((cur / pre - 1) * 100);
+    if (pct >= 0) {
+      note.className = "spend-note up";
+      note.textContent = `${monthName()} 比上月多花 ${pct}%`;
+    } else {
+      note.className = "spend-note down";
+      note.textContent = `${monthName()} 比上月少花 ${-pct}%`;
+    }
+    return;
+  }
 
   const ratio = cur / pre;
   const pct = Math.round(ratio * 100);
-  note.hidden = false;
   if (ratio >= 1.2) {
     note.className = "spend-note up";
     note.textContent = `本月已花到上月整月的 ${pct}%，超得有点多`;
@@ -530,9 +668,13 @@ let totalCount = 0;
 function renderItem(t) {
   const logs = t.logs || [];
   const stamp = t.updated_at || t.created_at;
+  // 记账日期和「录入日期」不是同一天时（补记 / 改过时间），把记账日期也显示出来
+  const occurred = String(t.occurred_at || "");
+  const diffDay = occurred.slice(0, 10) !== String(t.created_at || "").slice(0, 10);
+  const occPrefix = diffDay ? `记账 ${esc(occurred.slice(0, 16))} · ` : "";
   // 收起时到分，展开时到秒——两段都渲染好，靠 CSS 切换
-  const shortTime = "记录于 " + esc(fullTime(stamp));
-  const longTime = "记录于 " + esc(fullTimeSec(stamp));
+  const shortTime = occPrefix + "记录于 " + esc(fullTime(stamp));
+  const longTime = occPrefix + "记录于 " + esc(fullTimeSec(stamp));
   const timeHtml = `<span class="${logs.length ? "time-toggle" : "time-plain"}"` +
     (logs.length ? ` data-logs="${t.id}" title="点开看修改记录"` : "") +
     `><span class="t-short">${shortTime}</span>` +
@@ -549,14 +691,15 @@ function renderItem(t) {
   return `
   <li>
     <div class="row">
-      <span class="cat">${esc(t.category || "未分类")}</span>
-      <span class="amt">¥${yuan(t.amount_cents)}</span>
+      <span class="cat">${esc(t.category || (t.kind === "income" ? "收入" : "未分类"))}</span>
+      <span class="amt${t.kind === "income" ? " income" : ""}">${t.kind === "income" ? "+" : "−"}¥${yuan(t.amount_cents)}</span>
     </div>
     <div class="row2">
       <span class="txt">${esc(t.text)}</span>
       <span class="meta">${timeHtml}
         <button class="edit" data-id="${t.id}" data-text="${esc(t.text)}"
-                data-amount="${t.amount_cents == null ? "" : t.amount_cents}">编辑</button>
+                data-amount="${t.amount_cents == null ? "" : t.amount_cents}"
+                data-when="${esc(t.occurred_at || "")}">编辑</button>
         <button class="del" data-del="${t.id}" title="删除这笔">✕</button>
       </span>
     </div>
@@ -586,13 +729,107 @@ async function loadList(p) {
   renderPager(pages);
 }
 
+/* ---------- 卡片看的是哪个月 ----------
+   viewMonth 决定卡片和统计显示哪个月；流水列表不受影响（它本来就是全量账本）。 */
+function thisMonth() {
+  const n = new Date();
+  return n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0");
+}
+let viewMonth = thisMonth();
+function isThisMonth() { return viewMonth === thisMonth(); }
+function monthName() {
+  const [y, m] = viewMonth.split("-");
+  return `${y} 年 ${Number(m)} 月`;
+}
+/* 月份加减，返回 YYYY-MM。用 Date 算，跨年自动正确 */
+function shiftMonthStr(ym, delta) {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+
 async function load() {
-  const d = await (await fetch("/api/summary")).json();
-  $("total").textContent = d.total_yuan;
-  $("month").textContent = d.month;
+  const d = await (await fetch("/api/summary?month=" + viewMonth)).json();
+  if (d.month && d.month !== viewMonth) viewMonth = d.month;   // 服务端说了算
+  renderCard(d);
   await loadList(page);
   await loadStats();
 }
+
+/* 顶部卡片：月份 + 支出 / 收入 / 结余。数字全部来自后端 SQL，这里只负责摆。 */
+function renderCard(d) {
+  $("month").textContent = monthName();
+
+  // 卡片三栏都不带符号（标签已经写了支出/收入），只有结余为正负带 + / −
+  $("expenseNum").textContent = "¥" + d.expense_yuan;
+  $("incomeNum").textContent = "¥" + d.income_yuan;
+
+  const bal = d.balance_cents || 0;
+  const el = $("balanceNum");
+  el.textContent = (bal < 0 ? "−¥" : "+¥") + yuan(Math.abs(bal));
+  el.classList.toggle("neg", bal < 0);
+}
+
+/* 切月份：只重画卡片和统计，不动流水列表 */
+async function setMonth(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return;
+  const y = Number(ym.slice(0, 4));
+  if (y < 1970 || y > 2100) return;          // 防手滑打到 1900 / 2999
+  viewMonth = ym;
+  const d = await (await fetch("/api/summary?month=" + viewMonth)).json();
+  renderCard(d);
+  await loadStats();
+}
+
+$("prevMonth").addEventListener("click", () => setMonth(shiftMonthStr(viewMonth, -1)));
+$("nextMonth").addEventListener("click", () => setMonth(shiftMonthStr(viewMonth, 1)));
+
+/* 点月份弹自绘的年月面板：没有「清除」，也不能键盘乱输（都是按钮） */
+let popYear = null;
+
+function paintMonthPop() {
+  $("mpYear").textContent = popYear + " 年";
+  const cur = viewMonth.split("-");
+  $("mpGrid").innerHTML = Array.from({ length: 12 }, (_, i) => {
+    const m = String(i + 1).padStart(2, "0");
+    const on = Number(cur[0]) === popYear && cur[1] === m ? " on" : "";
+    return `<button type="button" data-ym="${popYear}-${m}" class="${on.trim()}">${i + 1} 月</button>`;
+  }).join("");
+}
+
+$("month").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const pop = $("monthPop");
+  if (!pop.hidden) { pop.hidden = true; return; }
+  popYear = Number(viewMonth.slice(0, 4));
+  paintMonthPop();
+  pop.hidden = false;
+});
+
+$("mpPrevYear").addEventListener("click", (e) => {
+  e.stopPropagation();
+  popYear -= 1;
+  paintMonthPop();
+});
+$("mpNextYear").addEventListener("click", (e) => {
+  e.stopPropagation();
+  popYear += 1;
+  paintMonthPop();
+});
+$("mpGrid").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-ym]");
+  if (!btn) return;
+  e.stopPropagation();
+  $("monthPop").hidden = true;
+  setMonth(btn.dataset.ym);
+});
+// 点面板外面就收起
+document.addEventListener("click", (e) => {
+  if ($("monthPop").hidden) return;
+  if (!e.target.closest("#monthPop") && !e.target.closest("#month")) {
+    $("monthPop").hidden = true;
+  }
+});
 
 $("prevPage").addEventListener("click", () => loadList(page - 1));
 $("nextPage").addEventListener("click", () => loadList(page + 1));
@@ -659,34 +896,81 @@ async function create(text) {
     }
     if (d.multi) {                     // 一句话拆成了好几笔
       const parts = d.items.map((it) =>
-        `${esc(it.parsed.category || "未分类")} ¥${it.parsed.amount_yuan}`);
+        `${esc(it.parsed.category || (it.parsed.kind === "income" ? "收入" : "未分类"))} `
+        + `${it.parsed.kind === "income" ? "+" : "−"}¥${it.parsed.amount_yuan}`);
       hint(`记了 ${d.items.length} 笔：` + parts.join("　·　"));
+      viewMonth = thisMonth();          // 刚记的账在本月，卡片跳回本月才看得见
       await load();                    // 先刷新统计，spendWarn 才是含这一笔的
       waifuSay(spendWarn || "记好啦");
       return d.items[0].parsed;
     }
     const p = d.parsed;
-    hint(`理解为：<b>${esc(p.category || "未分类")}</b> · <b>¥${p.amount_yuan}</b> · ${esc(p.occurred_at)}`);
+    hint(`理解为：<b>${esc(p.category || (p.kind === "income" ? "收入" : "未分类"))}</b> · `
+      + `<b>${p.kind === "income" ? "+" : "−"}¥${p.amount_yuan}</b> · ${esc(p.occurred_at)}`);
+    viewMonth = thisMonth();            // 刚记的账在本月，卡片跳回本月才看得见
     await load();                      // 先刷新统计，spendWarn 才是含这一笔的
     waifuSay(spendWarn || "记好啦");
     return p;
   }
 }
 
+/* 记账框只管记账——但万一有人把问题敲进来了，别让他吃「没听出金额」的错，
+   直接转去查账。判断保守：没有金额 且 带疑问词，才算问句。 */
+function looksLikeQuery(s) {
+  const asks = /多少|几笔|几次|哪类|哪个|什么类|账单|统计|平均|最贵|最高|收入|支出|总结/.test(s);
+  if (!asks) return false;
+  // 以疑问结尾的一定是问句，哪怕句子里有数字——「9月花了多少」里的 9 是月份，不是金额
+  if (/[多少笔吗？?]\s*$/.test(s)) return true;
+  const hasMoney = /\d/.test(s) ||
+    /[零一二两三四五六七八九十百千万亿]+\s*(块|元)/.test(s);
+  return !hasMoney;                  // 带金额就当记账（「午饭44」）
+}
+
+/* 记账框只管记账；查账走标题右边那个搜索框，互不干扰 */
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("text").value.trim();
   if (!text) return;
-  $("send").disabled = true;
+
+  if (looksLikeQuery(text)) {        // 兜底：这是问句，转去查账
+    $("text").value = "";
+    $("qtext").value = text;
+    hint("这句像是查账，帮你查了一下");
+    flashSearch();                   // 闪两下，提醒「答案在上面的搜索框下面」
+    await askQuery(text);
+    return;
+  }
+
+  const btn = $("send");
+  btn.disabled = true;
   try { await create(text); $("text").value = ""; }
-  finally { $("send").disabled = false; $("text").focus(); }
+  finally { btn.disabled = false; $("text").focus(); }
 });
 
 /* ---------- 自然语言查账 ---------- */
-$("qform").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const q = $("qtext").value.trim();
-  if (!q) return;
+/* 入口只有一个：标题右边的搜索框。答案显示在它下面（#qresult）。 */
+
+// 闪两下（2 秒内两轮），提醒用户答案在搜索框下面
+function flashSearch() {
+  const el = $("qtext");
+  el.classList.remove("flash");
+  void el.offsetWidth;               // 强制重排，动画才能重放
+  el.classList.add("flash");
+  el.addEventListener("animationend", () => el.classList.remove("flash"), { once: true });
+}
+
+// 搜索框文字一改，旧的查询结果就不作数了，先收起来
+$("qtext").addEventListener("input", () => {
+  if (!$("qresult").hidden) $("qresult").hidden = true;
+});
+
+// 把后端的 metric / group_by 翻成人话，DSL 那行别直接显示英文
+const METRIC_LABEL = { sum: "合计", count: "笔数", avg: "平均", balance: "结余" };
+const GROUP_LABEL = { category: "类别", month: "月份", none: "" };
+
+async function askQuery(q) {
+  $("qtext").value = q;
+  $("qresult").hidden = false;
   $("qanswer").style.color = "";
   $("qanswer").textContent = "查着呢…";
   $("qdsl").textContent = "";
@@ -702,16 +986,55 @@ $("qform").addEventListener("submit", async (e) => {
       $("qanswer").textContent = "查不了：" + (d.detail || "未知错误");
       return;
     }
+    // 没看懂的句子不显示数字，免得用户以为系统真懂了
+    if (d.ok === false) {
+      $("qanswer").style.color = "#e5484d";
+      $("qanswer").textContent = d.answer;
+      $("qdsl").textContent = "";
+      return;
+    }
+    $("qanswer").style.color = "";
     $("qanswer").innerHTML = "<b>" + esc(d.answer) + "</b>";
     const s = d.dsl;
     $("qdsl").textContent = "解析为：" + s.label + "（" + s.start + " ~ " + s.end + "）"
-      + " · " + s.metric
+      + " · " + (METRIC_LABEL[s.metric] || s.metric)
+      + (s.kind === "income" ? " · 收入" : "")
       + (s.categories.length ? " · " + s.categories.join("/") : "")
-      + (s.group_by !== "none" ? " · 按" + s.group_by : "");
+      + (s.group_by !== "none" ? " · 按" + GROUP_LABEL[s.group_by] : "")
+      + (d.source === "llm" ? " · 模型兜底" : "");
+    logQuery(q);                     // 记进「设置 → 历史记录」，可以重查
+    waifuSay(d.answer);              // 注意是 d.answer；s 是 DSL，没有 answer
   } catch (err) {
     $("qanswer").style.color = "#e5484d";
     $("qanswer").textContent = "请求失败：" + err.message;
   }
+}
+
+/* 查账历史存服务端：换浏览器、换设备都能看到，也能在历史记录里删掉。
+   只记问题，不记答案——答案每次现算，免得拿旧数字。 */
+async function logQuery(q) {
+  try {
+    await fetch("/api/queries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q }),
+    });
+  } catch (err) { /* 记不上就算了，查询本身已经成功了 */ }
+}
+
+/* 从历史记录里点「查询」：关掉设置 → 填回搜索框 → 重新查 → 闪一下 */
+async function replayQuery(q) {
+  $("settingsMask").hidden = true;
+  $("qtext").value = q;
+  flashSearch();
+  await askQuery(q);
+}
+
+$("qform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("qtext").value.trim();
+  if (!q) return;
+  await askQuery(q);
 });
 
 /* ---------- 编辑 ---------- */
@@ -737,6 +1060,10 @@ $("list").addEventListener("click", (e) => {
   editingId = Number(btn.dataset.id);
   $("editText").value = btn.dataset.text;
   $("editAmount").value = btn.dataset.amount ? (Number(btn.dataset.amount) / 100).toFixed(2) : "";
+  // 原来的时间可能是「2026-11-23」也可能带时分，拆开填两个框
+  const when = String(btn.dataset.when || "");
+  $("editDate").value = when.slice(0, 10);
+  $("editTime").value = when.length > 10 ? when.slice(11, 16) : "";
   $("mask").hidden = false;
   $("editText").focus();
 });
@@ -763,12 +1090,18 @@ $("editSave").addEventListener("click", async () => {
   if (!(Number(amt) > 0)) { $("editErr").textContent = "金额要大于 0"; return; }
   const amount_cents = Math.round(Number(amt) * 100);
 
+  // 日期必填；时间可以留空（留空就只记到天，和以前一样）
+  const day = $("editDate").value;
+  const clock = $("editTime").value;
+  if (!day) { $("editErr").textContent = "日期不能为空"; return; }
+  const occurred_at = clock ? `${day} ${clock}` : day;
+
   let confirmLarge = false;
   for (;;) {
     const r = await fetch("/api/transactions/" + editingId, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, amount_cents, confirm_large: confirmLarge }),
+      body: JSON.stringify({ text, amount_cents, occurred_at, confirm_large: confirmLarge }),
     });
     const d = await r.json();
     if (!r.ok) {
@@ -1047,20 +1380,36 @@ const OP_LABEL = { create: "新增", edit: "修改", delete: "删除", restore: 
 async function loadOps() {
   const list = $("opsList");
   try {
-    const ops = await (await fetch("/api/operations?limit=60")).json();
-    if (!ops.length) {
-      list.innerHTML = '<li class="muted">还没有操作记录</li>';
+    // 两种历史合在一起按时间排：做过的事（增改删恢复）+ 问过的话
+    const [ops, qs] = await Promise.all([
+      fetch("/api/operations?limit=60").then((r) => r.json()),
+      fetch("/api/queries?limit=60").then((r) => r.json()),
+    ]);
+    const rows = [
+      ...ops.map((o) => ({ at: o.created_at, op: o })),
+      ...qs.map((q) => ({ at: q.created_at, q: q })),
+    ].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+
+    if (!rows.length) {
+      list.innerHTML = '<li class="muted">还没有历史记录</li>';
       return;
     }
-    list.innerHTML = ops.map((o) => `
+    list.innerHTML = rows.map((r) => r.q ? `
       <li>
-        <span class="kind ${esc(o.kind)}">${esc(OP_LABEL[o.kind] || o.kind)}</span>
-        <span class="txt" title="${esc(o.tx_text || "")}">${esc(o.tx_text || "（已不存在的记录）")}</span>
-        <span class="muted">${esc(fullTime(o.created_at))}</span>
-        <button class="undo" data-op="${o.id}" ${o.undone ? "disabled" : ""}>
-          ${o.undone ? "已撤销" : "撤销"}
+        <span class="kind query">查询</span>
+        <span class="txt" title="${esc(r.q.question)}">${esc(r.q.question)}</span>
+        <span class="muted">${esc(fullTime(r.q.created_at))}</span>
+        <button class="undo" data-replay="${esc(r.q.question)}">查询</button>
+        <button class="undo" data-qdel="${r.q.id}" title="删除这条记录">✕</button>
+      </li>` : `
+      <li>
+        <span class="kind ${esc(r.op.kind)}">${esc(OP_LABEL[r.op.kind] || r.op.kind)}</span>
+        <span class="txt" title="${esc(r.op.tx_text || "")}">${esc(r.op.tx_text || "（已不存在的记录）")}</span>
+        <span class="muted">${esc(fullTime(r.op.created_at))}</span>
+        <button class="undo" data-op="${r.op.id}" ${r.op.undone ? "disabled" : ""}>
+          ${r.op.undone ? "已撤销" : "撤销"}
         </button>
-        <button class="undo" data-opdel="${o.id}" title="删除这条记录">✕</button>
+        <button class="undo" data-opdel="${r.op.id}" title="删除这条记录">✕</button>
       </li>`).join("");
   } catch (e) {
     list.innerHTML = '<li class="muted">读不到历史记录</li>';
@@ -1068,6 +1417,23 @@ async function loadOps() {
 }
 
 $("opsList").addEventListener("click", async (e) => {
+  // 「查询」：退出设置，拿这句话重新查一次
+  const replay = e.target.closest("[data-replay]");
+  if (replay) {
+    await replayQuery(replay.dataset.replay);
+    return;
+  }
+
+  const qDel = e.target.closest("[data-qdel]");
+  if (qDel) {
+    const r = await fetch("/api/queries/" + qDel.dataset.qdel, { method: "DELETE" });
+    const d = await r.json();
+    if (!r.ok) { toast(d.detail || "删不掉", false); return; }
+    toast("记录已删除");
+    await loadOps();
+    return;
+  }
+
   const delBtn = e.target.closest("[data-opdel]");
   if (delBtn) {
     const ok = await askConfirm("删掉这条历史记录？只清理记录，不影响账目本身。",

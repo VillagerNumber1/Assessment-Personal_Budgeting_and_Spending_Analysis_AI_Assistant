@@ -12,7 +12,7 @@ r"""记账服务的后端：一个常驻程序，监听端口，回答浏览器�
 import re
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -60,13 +60,16 @@ class NewTransaction(BaseModel):
     amount_cents: int | None = None
     occurred_at: str | None = None
     category: str | None = None
+    kind: str | None = None            # expense / income，不传就由规则猜
     confirm_large: bool = False        # 用户已经点过「确认」就用 true 重发
 
 
 class EditTransaction(BaseModel):
-    """PATCH 的请求体：编辑框里只有「做了什么」和「金额」。"""
+    """PATCH 的请求体：编辑框里是「做了什么 / 金额 / 方向 / 什么时候」。"""
     text: str
     amount_cents: int | None = None
+    kind: str | None = None            # 传了才改方向，不传保留原来的
+    occurred_at: str | None = None     # 2026-11-23 或 2026-11-23 14:30
     confirm_large: bool = False
 
 
@@ -100,6 +103,41 @@ def get_transcriber():
 def reset_transcriber() -> None:
     global _transcriber
     _transcriber = None
+
+
+def check_occurred_at(value: str | None) -> str | None:
+    """校验「记账时间」，接受 `2026-11-23` 或 `2026-11-23 14:30`。
+
+    闰年、月份天数、小时分钟范围**不用手写**：strptime 会把 2026-02-30
+    和 25:00 都当成错误抛出来，标准库已经算好了。
+    返回归一化后的字符串，空值原样返回。
+    """
+    if value is None:
+        return None
+    raw = value.strip().replace("T", " ")
+    if not raw:
+        return None
+
+    parsed = None
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        raise HTTPException(
+            status_code=400,
+            detail="日期格式不对：写 2026-11-23 或 2026-11-23 14:30")
+
+    # 用户说「年月日大于 1970 就行」，这里照办；上限给一年，防止手滑打成 2999
+    if parsed.year < 1970:
+        raise HTTPException(status_code=400, detail="日期最早只能到 1970 年")
+    if parsed > datetime.now() + timedelta(days=366):
+        raise HTTPException(status_code=400, detail="日期太远了（最多往后一年）")
+
+    # 只给了日期就别硬塞一个 00:00，保持「只记到天」的记录干净
+    return parsed.strftime("%Y-%m-%d") if len(raw) <= 10 else parsed.strftime("%Y-%m-%d %H:%M")
 
 
 def check_amount(amount: int | None, confirm_large: bool = False) -> None:
@@ -181,7 +219,7 @@ def write_settings(body: SettingsBody) -> dict:
 @app.get("/api/stats")
 def get_stats(month: str | None = None) -> dict:
     """分类聚合 + 近 6 个月趋势。month 形如 2026-11，不传就是本月。"""
-    return storage.stats(month)
+    return storage.stats(check_month(month))
 
 
 @app.post("/api/query")
@@ -195,17 +233,38 @@ def ask_query(body: QueryRequest) -> dict:
         raise HTTPException(status_code=400, detail="问题不能是空的")
     if len(question) > 100:
         raise HTTPException(status_code=400, detail="问题太长了（最多 100 字）")
-    return query.ask(question)
+    # 规则看不懂时，query.ask 会拿这个 key 去问模型「这到底是不是在问账」
+    return query.ask(question, api_key=current_key())
+
+
+def check_month(value: str | None) -> str:
+    """校验 YYYY-MM，返回它；不传就是本月。
+
+    光靠正则不够：`2026-13` 也符合 \\d{4}-\\d{2}，月份得单独卡 01~12。
+    """
+    ym = value or date.today().strftime("%Y-%m")
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", ym):
+        raise HTTPException(status_code=400, detail="月份格式应该是 2026-11")
+    return ym
 
 
 @app.get("/api/summary")
-def summary() -> dict:
-    """本月总额 + 最近 10 条。全部只读 confirmed 的账。"""
-    total = storage.month_total()
+def summary(month: str | None = None) -> dict:
+    """某个月的支出 / 收入 / 结余 + 最近 10 条。month 形如 2026-11，不传就是本月。"""
+    ym = check_month(month)
+    expense = storage.month_total(ym, kind="expense")
+    income = storage.month_total(ym, kind="income")
     return {
-        "month": date.today().strftime("%Y-%m"),
-        "total_cents": total,
-        "total_yuan": storage.yuan(total),
+        "month": ym,
+        # total_cents / total_yuan 保留：老前端和 README 都按「本月支出」在用
+        "total_cents": expense,
+        "total_yuan": storage.yuan(expense),
+        "expense_cents": expense,
+        "income_cents": income,
+        "balance_cents": income - expense,
+        "expense_yuan": storage.yuan(expense),
+        "income_yuan": storage.yuan(income),
+        "balance_yuan": storage.yuan(income - expense),
         "recent": storage.list_recent(10),
     }
 
@@ -232,7 +291,9 @@ def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
     p = parser.parse(text)
     amount = fallback.amount_cents if fallback.amount_cents is not None else p["amount_cents"]
     category = fallback.category or p["category"]
-    occurred = fallback.occurred_at or p["occurred_at"]
+    # 新增时也要校验日期：接口是公开的，不能只在编辑那条路径上验
+    occurred = check_occurred_at(fallback.occurred_at) or p["occurred_at"]
+    kind = fallback.kind if fallback.kind in storage.KINDS else p["kind"]
     used_llm = False
 
     if (amount is None or category is None) and budget[0] > 0 and current_key():
@@ -242,9 +303,13 @@ def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
             used_llm = True
             amount = amount if amount is not None else guess["amount_cents"]
             category = category or guess["category"]
+            # 模型也可以纠正方向（「收了个红包」规则没词的时候），但不许改金额
+            if fallback.kind not in storage.KINDS and guess.get("kind") in storage.KINDS:
+                kind = guess["kind"]
 
     return {"text": text, "amount": amount, "occurred": occurred,
-            "category": category, "hits": p["hits"], "llm": used_llm}
+            "category": category, "kind": kind, "vague": p["vague_date"],
+            "hits": p["hits"], "llm": used_llm}
 
 
 def _pack(item: dict, new_id: int) -> dict:
@@ -255,10 +320,24 @@ def _pack(item: dict, new_id: int) -> dict:
             "amount_yuan": storage.yuan(item["amount"]),
             "occurred_at": item["occurred"],
             "category": item["category"],
+            "kind": item["kind"],
             "hits": item["hits"],
             "llm": item["llm"],
         },
     }
+
+
+def check_vague_date(item: dict, given: str | None) -> None:
+    """「最近」「上周」这种说不清的日期，宁可拦下来问一句。
+
+    默默记成今天等于替用户编了个日期，比报错更糟——和「没看懂就说没看懂」是同一个原则。
+    调用方显式给了日期（接口传 occurred_at）就放行。
+    """
+    if item["vague"] and not given:
+        raise HTTPException(
+            status_code=400,
+            detail=f"「{item['vague']}」听不出具体是哪天。换成「昨天」「前天」这种说法，"
+                   f"或者先记一笔、再用「编辑」改日期。")
 
 
 @app.post("/api/transactions")
@@ -276,24 +355,33 @@ def create_transaction(tx: NewTransaction) -> dict:
 
     # 只有「没显式给金额」时才拆句；给了金额说明调用方自己决定好了一笔
     if tx.amount_cents is None and len(clauses) > 1:
-        items = []
+        # 先把每一句都校验完，再统一写库：不然第二句被拦下时，第一句已经存进去了，
+        # 接口返回 400 但数据落了库，用户重试就会多出一笔重复账。
+        resolved = []
         for clause in clauses:
             item = _resolve(clause, tx, budget)
             if item["amount"] is None:
                 continue                      # 没金额的分句不记
+            check_vague_date(item, tx.occurred_at)
             check_amount(item["amount"], tx.confirm_large)
-            try:
-                new_id = storage.add(item["text"], item["amount"],
-                                     item["occurred"], item["category"])
-            except sqlite3.Error as exc:
-                raise HTTPException(status_code=500, detail=f"写入失败：{exc}") from exc
-            items.append(_pack(item, new_id))
+            resolved.append(item)
 
-        if items:
+        if resolved:
+            items = []
+            for item in resolved:
+                try:
+                    new_id = storage.add(item["text"], item["amount"],
+                                         item["occurred"], item["category"],
+                                         kind=item["kind"])
+                except sqlite3.Error as exc:
+                    raise HTTPException(status_code=500, detail=f"写入失败：{exc}") from exc
+                items.append(_pack(item, new_id))
             return {"ok": True, "multi": True, "items": items}
 
     # 拆不开，或者拆出来一笔带金额的都没有 —— 按整句存一条
     item = _resolve(tx.text, tx, budget)
+    # 先报日期听不懂：这句话可能两样都缺（「最近花了一千多」），日期更好改
+    check_vague_date(item, tx.occurred_at)
     # 连金额都没解析出来就别存：null 金额会进统计的 count(*)，留着纯属脏数据
     if item["amount"] is None:
         raise HTTPException(
@@ -301,7 +389,8 @@ def create_transaction(tx: NewTransaction) -> dict:
             detail="没听出金额，说具体一点，比如「午饭 32」")
     check_amount(item["amount"], tx.confirm_large)
     try:
-        new_id = storage.add(item["text"], item["amount"], item["occurred"], item["category"])
+        new_id = storage.add(item["text"], item["amount"], item["occurred"],
+                             item["category"], kind=item["kind"])
     except sqlite3.Error as exc:
         raise HTTPException(status_code=500, detail=f"写入失败：{exc}") from exc
 
@@ -327,10 +416,21 @@ def edit_transaction(tx_id: int, body: EditTransaction) -> dict:
 
     if body.amount_cents is None:
         raise HTTPException(status_code=400, detail="金额不能为空")
+    if body.kind is not None and body.kind not in storage.KINDS:
+        raise HTTPException(status_code=400, detail="方向只能是 expense（支出）或 income（收入）")
     check_amount(body.amount_cents, body.confirm_large)
-    category = parser.parse(text)["category"] or old["category"]
+    when = check_occurred_at(body.occurred_at) or old["occurred_at"]
+    parsed = parser.parse(text)
+    category = parsed["category"] or old["category"]
+    # 只改金额 / 日期时不动方向；文字变了才重新猜（「午饭」改成「发工资」要变收入）
+    if body.kind in storage.KINDS:
+        kind = body.kind
+    elif text != old["text"]:
+        kind = parsed["kind"]
+    else:
+        kind = old["kind"]
 
-    storage.update(tx_id, text, body.amount_cents, category)
+    storage.update(tx_id, text, body.amount_cents, category, kind, when)
     return {"ok": True, "item": storage.get(tx_id)}
 
 
@@ -368,6 +468,36 @@ def undo_operation(op_id: int) -> dict:
 def delete_operation(op_id: int) -> dict:
     """删掉一条历史记录（只清理记录，不改账目）。"""
     if not storage.delete_operation(op_id):
+        raise HTTPException(status_code=404, detail="这条记录不存在")
+    return {"ok": True}
+
+
+class QueryLog(BaseModel):
+    """POST /api/queries 的请求体：只记问题本身。"""
+    question: str
+
+
+@app.get("/api/queries")
+def list_queries(limit: int = 60) -> list[dict]:
+    """查账历史：问过些什么，最新在上面。"""
+    return storage.queries(max(1, min(limit, 200)))
+
+
+@app.post("/api/queries")
+def log_query(body: QueryLog) -> dict:
+    """记一条查账历史。重复问同一句也会记（用户明确要的）。"""
+    q = body.question.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="问题不能是空的")
+    if len(q) > 100:
+        raise HTTPException(status_code=400, detail="问题太长了（最多 100 字）")
+    return {"ok": True, "id": storage.add_query(q)}
+
+
+@app.delete("/api/queries/{query_id}")
+def delete_query(query_id: int) -> dict:
+    """删掉一条查账历史。"""
+    if not storage.delete_query(query_id):
         raise HTTPException(status_code=404, detail="这条记录不存在")
     return {"ok": True}
 
