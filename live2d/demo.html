@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live2D 看板娘 · 本地预览</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --muted:#8a94a6; --accent:#2f7cf6; --red:#e5484d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.6 "Microsoft YaHei","微软雅黑","PingFang SC",system-ui,sans-serif; }
+  main { max-width:680px; margin:0 auto; padding:24px 16px 96px; }
+
+  .notice { background:#fff7e6; border:1px solid #f5d79a; color:#7a5300; font-size:13px;
+            border-radius:12px; padding:10px 14px; margin-bottom:18px; }
+  .notice b { color:#5c3d00; }
+
+  .topbar { display:flex; align-items:baseline; gap:10px; margin:0 2px 14px; }
+  .topbar h1 { margin:0; font-size:20px; letter-spacing:.5px; }
+  .topbar .tag { font-size:12px; color:var(--muted); }
+
+  .total-card { background:linear-gradient(135deg,#2f7cf6,#5b9bff); color:#fff;
+                border-radius:16px; padding:22px 24px; box-shadow:0 8px 24px rgba(47,124,246,.25); }
+  .total-card .label { opacity:.85; font-size:13px; letter-spacing:.5px; }
+  .total-card .num { font-size:40px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.2; }
+  .total-card .month { opacity:.8; font-size:13px; }
+
+  .entry { display:flex; gap:8px; margin:18px 0 6px; }
+  .entry input { flex:1; padding:12px 14px; border:1px solid #e2e6ee; border-radius:12px;
+                 font-size:15px; background:var(--card); outline:none; min-width:0; }
+  .entry input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(47,124,246,.12); }
+  .entry button { padding:0 18px; border:0; border-radius:12px; background:var(--accent); color:#fff;
+                  font-size:15px; cursor:pointer; white-space:nowrap; }
+  .entry .mic { background:#eef2f8; color:#334155; font-size:18px; padding:0 14px; }
+
+  ul { list-style:none; padding:0; margin:14px 0 0; display:flex; flex-direction:column; gap:8px; }
+  li { background:var(--card); border-radius:12px; padding:12px 16px; box-shadow:0 1px 2px rgba(16,24,40,.05);
+       display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+  li .cat { font-size:12px; color:var(--accent); background:rgba(47,124,246,.1); padding:2px 8px; border-radius:999px; }
+  li .amt { font-weight:700; font-variant-numeric:tabular-nums; color:var(--red); }
+
+  .panel { background:var(--card); border-radius:16px; padding:16px 18px; margin-top:14px;
+           box-shadow:0 1px 2px rgba(16,24,40,.05); }
+  .panel h3 { margin:0 0 10px; font-size:13px; color:var(--muted); font-weight:600; letter-spacing:.5px; }
+
+  /* ---- 调试面板（只在这个预览页里出现，生产片段没有它） ---- */
+  #dev { position:fixed; left:14px; bottom:14px; z-index:9500; width:268px;
+         background:rgba(255,255,255,.97); border:1px solid #e2e6ee; border-radius:14px;
+         box-shadow:0 10px 30px rgba(16,24,40,.16); font-size:12px; overflow:hidden; }
+  #dev summary { cursor:pointer; padding:10px 14px; font-weight:600; font-size:12px;
+                 color:#334155; list-style:none; user-select:none; }
+  #dev summary::-webkit-details-marker { display:none; }
+  #dev[open] summary { border-bottom:1px solid #eef2f7; }
+  #dev .body { padding:10px 14px 14px; }
+  #dev .row { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  #dev button { border:1px solid #e2e6ee; background:#fff; border-radius:8px; padding:5px 9px;
+                font-size:12px; cursor:pointer; color:#334155; }
+  #dev button:hover { border-color:var(--accent); color:var(--accent); }
+  #dev .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#cbd5e1; margin-right:6px; }
+  #dev .dot.run { background:#16a34a; }
+  #dev .dot.load { background:#f59e0b; }
+  #dev .dot.fail { background:#e5484d; }
+  #dev .label { color:var(--muted); }
+  #dev .status { margin:2px 0 8px; line-height:1.5; word-break:break-all; }
+  #dev .slider { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  #dev .slider input { flex:1; }
+  #dev .slider b { width:42px; text-align:right; font-variant-numeric:tabular-nums; }
+  #dev .probe { margin-top:8px; border-top:1px dashed #e6ebf3; padding-top:8px; }
+  #dev .probe div { display:flex; justify-content:space-between; gap:8px; padding:2px 0; }
+  #dev .ok { color:#16a34a; }
+  #dev .bad { color:#e5484d; }
+  #dev code { background:#f4f6fa; padding:1px 5px; border-radius:5px; font-size:11px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="notice">
+    <b>这是看板娘的本地预览页，不是记账主页面。</b>
+    页面外壳是照抄的，用来检查遮挡和位置；右下角的小人由 <code>waifu.js</code> 加载。
+    直接双击打开会被浏览器拦，请用 <code>preview.bat</code> 起本地服务器。
+  </div>
+
+  <header class="topbar">
+    <h1>记账小助手</h1>
+    <span class="tag">一句话记一笔</span>
+  </header>
+
+  <div class="total-card">
+    <div class="label">本月支出</div>
+    <div class="num">¥1,286.50</div>
+    <div class="month">2026 年 11 月</div>
+  </div>
+
+  <form class="entry" onsubmit="return false">
+    <input placeholder="说一句话，比如「昨天打车32」" autocomplete="off">
+    <button type="submit">记一笔</button>
+    <button type="button" class="mic" title="录音">🎤</button>
+  </form>
+
+  <div class="panel">
+    <h3>分类统计</h3>
+    <ul>
+      <li><span class="cat">餐饮</span><span class="amt">¥ 612.00</span></li>
+      <li><span class="cat">交通</span><span class="amt">¥ 232.50</span></li>
+      <li><span class="cat">购物</span><span class="amt">¥ 442.00</span></li>
+    </ul>
+  </div>
+
+  <ul>
+    <li><span>昨天 打车 32 元</span><span class="amt">¥32.00</span></li>
+    <li><span>午饭 黄焖鸡 26 元</span><span class="amt">¥26.00</span></li>
+    <li><span>买书 89 元</span><span class="amt">¥89.00</span></li>
+  </ul>
+</main>
+
+<details id="dev" open>
+  <summary>Live2D 调试面板</summary>
+  <div class="body">
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">未启动</span></div>
+
+    <div class="row">
+      <button data-say="记好啦，本月还剩 1,713 块～">记好啦</button>
+      <button data-say="我看看…这个月吃饭花了 612 块。">我看看</button>
+      <button data-say="这个我算不出来，换个说法？">算不出来</button>
+    </div>
+
+    <div class="row">
+      <button id="toggle">隐藏 / 显示</button>
+      <button id="copy">复制位置配置</button>
+    </div>
+
+    <div class="slider"><span class="label">X</span>
+      <input id="dx" type="range" min="-120" max="120" step="2" value="0"><b id="dxv">0</b></div>
+    <div class="slider"><span class="label">Y</span>
+      <input id="dy" type="range" min="-120" max="120" step="2" value="0"><b id="dyv">0</b></div>
+
+    <div class="probe">
+      <button id="check">测一下四个镜像</button>
+      <div id="probeList"></div>
+    </div>
+  </div>
+</details>
+
+<script src="./waifu.js"></script>
+<script>
+(function () {
+  var dot = document.getElementById("dot");
+  var statusText = document.getElementById("statusText");
+  var dx = document.getElementById("dx");
+  var dy = document.getElementById("dy");
+  var dxv = document.getElementById("dxv");
+  var dyv = document.getElementById("dyv");
+
+  var dotClass = { running: "run", loading: "load", failed: "fail", idle: "" };
+
+  Live2DWaifu.onStatus(function (s) {
+    dot.className = "dot " + (dotClass[s.status] || "");
+    statusText.textContent = s.message;
+  });
+
+  // 台词按钮
+  Array.prototype.forEach.call(document.querySelectorAll("[data-say]"), function (btn) {
+    btn.addEventListener("click", function () { Live2DWaifu.say(btn.getAttribute("data-say")); });
+  });
+
+  document.getElementById("toggle").addEventListener("click", function () { Live2DWaifu.toggle(); });
+
+  function applyNudge() {
+    var x = Number(dx.value), y = Number(dy.value);
+    dxv.textContent = x;
+    dyv.textContent = y;
+    Live2DWaifu.nudge(x, y);
+  }
+  dx.addEventListener("input", applyNudge);
+  dy.addEventListener("input", applyNudge);
+
+  document.getElementById("copy").addEventListener("click", function () {
+    var snippet = "offset: { x: " + Number(dx.value) + ", y: " + Number(dy.value) + " }";
+    navigator.clipboard.writeText(snippet).then(function () {
+      statusText.textContent = "已复制：" + snippet;
+    }, function () {
+      statusText.textContent = snippet;
+    });
+  });
+
+  // 镜像体检
+  document.getElementById("check").addEventListener("click", function () {
+    var list = document.getElementById("probeList");
+    list.innerHTML = '<div><span class="label">探测中…</span></div>';
+    Live2DWaifu.diagnose().then(function (results) {
+      list.innerHTML = results.map(function (r) {
+        return '<div><span>' + r.base.replace(/^https:\/\//, "") + '</span><span class="' +
+          (r.ok ? "ok" : "bad") + '">' + (r.ok ? "OK" : r.reason) + " · " + r.ms + "ms</span></div>";
+      }).join("");
+    });
+  });
+})();
+</script>
+</body>
+</html>
