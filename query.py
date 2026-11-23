@@ -79,11 +79,22 @@ def parse_category(q: str) -> list[str]:
 
 
 def parse_metric(q: str) -> str:
+    # 「还剩多少」「结余」问的是收入减支出，不是支出合计 —— 这条要排在最前面
+    if any(w in q for w in ("剩下", "剩余", "还剩", "结余", "余额", "剩多少", "超支")):
+        return "balance"
     if "平均" in q:
         return "avg"
     if any(w in q for w in ("几笔", "几次", "多少笔", "笔数", "多少次")):
         return "count"
     return "sum"
+
+
+def parse_kind(q: str) -> str:
+    """问的是收入还是支出。默认按支出算——「花了多少」永远默认支出。"""
+    if any(w in q for w in ("收入", "进账", "赚了", "赚了多少", "收了", "到账",
+                             "工资", "红包", "退款", "报销", "奖金")):
+        return "income"
+    return "expense"
 
 
 def parse_group(q: str) -> str:
@@ -102,6 +113,7 @@ def parse_question(q: str, today: date | None = None) -> dict:
         "question": q,
         "metric": parse_metric(q),
         "group_by": parse_group(q),
+        "kind": parse_kind(q),
         "start": start.isoformat(),
         "end": end.isoformat(),
         "label": label,
@@ -111,10 +123,20 @@ def parse_question(q: str, today: date | None = None) -> dict:
 
 def run(dsl: dict) -> list[dict]:
     """按 DSL 查库。SQL 全部由代码拼，参数绑定，用户输入不进 SQL。"""
+    # 结余 = 收入 − 支出，两种方向都要算，所以不套用 kind 过滤
+    if dsl["metric"] == "balance":
+        sql = ("select coalesce(sum(case when kind = 'income' then amount_cents"
+               " else -amount_cents end), 0) as value, count(*) as count"
+               " from transactions where status = 'confirmed' and deleted_at is null"
+               " and occurred_at between ? and ?")
+        return storage.query(sql, (dsl["start"], dsl["end"] + " 23:59"))
+
     # deleted_at is null 这条不能少：删掉的账还留在表里，漏了就会算进查账结果
-    where = ["status = 'confirmed'", "deleted_at is null",
+    where = ["status = 'confirmed'", "deleted_at is null", "kind = ?",
              "occurred_at between ? and ?"]
-    params: list = [dsl["start"], dsl["end"]]
+    # 结束日补上 23:59：occurred_at 可能带时间（2026-11-30 14:30），
+    # 直接比 '2026-11-30' 会把它排除掉。补时间还能继续走索引。
+    params: list = [dsl.get("kind", "expense"), dsl["start"], dsl["end"] + " 23:59"]
 
     if dsl["categories"]:
         marks = ",".join("?" * len(dsl["categories"]))
@@ -143,9 +165,20 @@ def to_sentence(dsl: dict, rows: list[dict]) -> str:
     """把结果说成人话。数字全部来自 SQL，这里只负责串句子。"""
     y = storage.yuan
     label = dsl["label"]
+    income = dsl.get("kind") == "income"
+    what = "收入" if income else ""
 
     if not rows:
-        return f"{label}没有记录"
+        return f"{label}没有{what}记录"
+
+    # 结余：正数说「还剩」，负数说「超支」，别只丢一个负号给用户猜
+    if dsl["metric"] == "balance":
+        if not rows[0]["count"]:
+            return f"{label}没有记录"
+        value = rows[0]["value"] or 0
+        if value >= 0:
+            return f"{label}还剩下 {y(value)} 元（收入 − 支出）"
+        return f"{label}超支了 {y(-value)} 元（收入 − 支出）"
 
     if dsl["group_by"] == "category":
         top = rows[0]
@@ -158,9 +191,9 @@ def to_sentence(dsl: dict, rows: list[dict]) -> str:
 
     row = rows[0]
     if not row["count"]:
-        return f"{label}没有记录"
+        return f"{label}没有{what}记录"
     if dsl["metric"] == "count":
-        return f"{label}共 {row['count']} 笔"
+        return f"{label}{what}共 {row['count']} 笔"
 
     cat = "、".join(dsl["categories"])
     value = row["value"] or 0
@@ -168,12 +201,107 @@ def to_sentence(dsl: dict, rows: list[dict]) -> str:
         who = f"{cat}的" if cat else ""
         return f"{label}{who}平均每笔 {y(round(value))} 元，共 {row['count']} 笔"
     if cat:
-        return f"{label}{cat}一共 {y(value)} 元，共 {row['count']} 笔"
-    return f"{label}一共 {y(value)} 元，共 {row['count']} 笔"
+        return f"{label}{cat}{what}一共 {y(value)} 元，共 {row['count']} 笔"
+    return f"{label}{what}一共 {y(value)} 元，共 {row['count']} 笔"
 
 
-def ask(q: str, today: date | None = None) -> dict:
-    """完整流程：问题 -> DSL -> 查询 -> 回答。返回给前端展示。"""
-    dsl = parse_question(q, today)
-    rows = run(dsl)
-    return {"question": q, "dsl": dsl, "rows": rows, "answer": to_sentence(dsl, rows)}
+def looks_like_query(q: str) -> bool:
+    """规则能不能看出「这是一句在问账的话」。
+
+    只看疑问/聚合词，不看「今天」「外卖」这种名词——光命中时间或类别不算问账，
+    否则「今天天气不错」「帮我订个外卖」都会被答成一句数字。
+    认不出来交给模型判，模型也判不了就老实说没看懂。
+    """
+    return any(w in q for w in ("多少", "几笔", "几次", "平均", "结余", "余额",
+                                 "剩下", "还剩", "收入", "支出", "花销",
+                                 "统计", "一共", "哪类", "哪个", "最贵", "最高"))
+
+
+# 规则认识的时间说法 / 认识但容易答歪的（周、季度、最近…）
+# 注意别把「近」放进来：近 7 天由正则单独处理，「最近」规则是算不出来的
+KNOWN_TIME_WORDS = ("上个月", "上月", "本月", "这个月", "当月", "去年", "今年",
+                    "今天", "昨天", "前天")
+VAGUE_TIME_WORDS = ("周", "星期", "季度", "半年", "最近", "这几天", "过去",
+                    "年初", "年底", "月初", "月底")
+
+
+def time_is_understood(q: str) -> bool:
+    """时间说法规则到底认不认得。
+
+    「上周花了多少」里规则只认得「多少」，时间会默默兜到「这个月」——
+    这种宁可不答，交给模型去算真实区间。
+    """
+    if re.search(r"近\s*\d+\s*天", q) or re.search(r"\d{1,2}\s*月份?", q):
+        return True
+    if any(w in q for w in KNOWN_TIME_WORDS):
+        return True
+    # 完全没提时间：默认「这个月」是可以接受的
+    if not any(w in q for w in VAGUE_TIME_WORDS):
+        return True
+    return False
+
+
+def dsl_from_llm(raw: dict, today: date) -> dict | None:
+    """把模型给的结构拼成 DSL。模型只能出结构，数字仍然由 SQL 算。
+
+    区间**直接用模型给的 start/end**：以前让模型从 this_month 这类枚举里选，
+    「11月初到12月底」这种区间就表达不出来，只能挑个最像的，结果答非所问。
+    """
+    try:
+        start = date.fromisoformat(raw["start"])
+        end = date.fromisoformat(raw["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if end < start:
+        return None
+
+    metric = raw.get("metric")
+    if metric not in AGG_SQL and metric != "balance":
+        metric = "sum"
+    kind = raw.get("kind")
+    if kind not in ("expense", "income"):
+        kind = "expense"
+    group = raw.get("group_by")
+    if group not in ("none", "category", "month"):
+        group = "none"
+    cats = [c for c in (raw.get("categories") or []) if c in CATEGORY_WORDS]
+
+    return {
+        "question": "",
+        "metric": metric,
+        "group_by": group,
+        "kind": kind,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "label": raw.get("label") or f"{start.isoformat()} ~ {end.isoformat()}",
+        "categories": cats,
+    }
+
+
+def ask(q: str, today: date | None = None, api_key: str | None = None) -> dict:
+    """完整流程：问题 -> DSL -> 查询 -> 回答。返回给前端展示。
+
+    返回里的 ok=False 表示「这句话没看懂」，前端应该照实说，不要显示数字。
+    """
+    today = today or date.today()
+
+    # 规则认得「问什么」，但时间说法它没见过（上周 / 最近 / 年底）→ 也别硬答
+    if looks_like_query(q) and time_is_understood(q):
+        dsl = parse_question(q, today)
+        rows = run(dsl)
+        return {"ok": True, "source": "rules", "question": q, "dsl": dsl,
+                "rows": rows, "answer": to_sentence(dsl, rows)}
+
+    # 规则看不出来：问模型「这到底是不是在问账」
+    import llm                                  # 延迟 import，避免 query <-> llm 相互牵扯
+    guess = llm.parse_query(q, api_key)
+    if guess and guess.get("is_query"):
+        dsl = dsl_from_llm(guess, today)
+        if dsl:
+            dsl["question"] = q
+            rows = run(dsl)
+            return {"ok": True, "source": "llm", "question": q, "dsl": dsl,
+                    "rows": rows, "answer": to_sentence(dsl, rows)}
+
+    return {"ok": False, "source": "none", "question": q, "dsl": None, "rows": [],
+            "answer": "没看懂这句话。可以问「这个月花了多少」「上个月吃饭多少钱」这种。"}
