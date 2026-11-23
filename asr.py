@@ -126,17 +126,19 @@ class CloudASR(Transcriber):
         return _T2S.convert(text) if _T2S is not None else text
 
 
-def create_transcriber(backend: str = ASR_BACKEND) -> Transcriber:
+def create_transcriber(backend: str = ASR_BACKEND,
+                       api_key: str | None = None) -> Transcriber:
     """按配置挑一个识别器，界面只需要调这个函数。
 
     当前规则（暂定）：
         有 key   → 云端；云端失败直接抛错，由界面弹窗并退出，**不静默回退**
         没有 key → 本地 whisper
 
-    以后想改成"云端失败自动退回本地"，加一个组合类把两个引擎串起来即可。
+    api_key 传 None 表示"用 .env 里的"；传具体值则优先用它（设置面板填的 key）。
     """
+    key = api_key if api_key is not None else DEEPSEEK_API_KEY
     if backend == "local":
         return LocalWhisper()
     if backend == "cloud":
-        return CloudASR()
-    return CloudASR() if DEEPSEEK_API_KEY else LocalWhisper()
+        return CloudASR(key)
+    return CloudASR(key) if key else LocalWhisper()
