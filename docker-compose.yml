@@ -6,9 +6,14 @@ services:
   web:
     build:
       context: .
+      # 构建时用宿主机网络：绕开 WSL2 的 DNS/NAT 问题（容器里连不上 pypi 时就靠这个）
+      network: host
       args:
         # 国内默认清华源；境外构建可以设 PIP_INDEX=https://pypi.org/simple
-        PIP_INDEX: ${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        # 2026-11-23 验证：清华源没有fastapi最新版本，换成了中国科技大学的。
+        PIP_INDEX: ${PIP_INDEX:-https://pypi.mirrors.ustc.edu.cn/simple/}
+        # 直连 docker.io 超时时，设 BASE_IMAGE=镜像加速地址
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.14-slim}
     image: bill-assistant:latest
     container_name: bill-assistant
     ports:
