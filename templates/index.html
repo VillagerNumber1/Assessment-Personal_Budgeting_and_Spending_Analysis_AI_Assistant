@@ -6,7 +6,7 @@
 <title>记账小助手</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --muted:#8a94a6; --accent:#2f7cf6; --red:#e5484d;
-        --income:#ffd54a; }   /* 卡片的「本月收入」和列表里的收入用同一个黄 */
+        --income:#ffd54a; }   /* 列表里的收入用这个黄；卡片上的数字一律白色 */
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:15px/1.6 "Microsoft YaHei","微软雅黑","PingFang SC",system-ui,sans-serif; }
@@ -84,15 +84,55 @@
   [data-theme="dark"] .mp-head .mon-nav { background:#3a3a3a; color:#9ec1ff; }
   [data-theme="dark"] .mp-grid button { background:#3a3a3a; color:#e8e8e8; }
   [data-theme="dark"] .mp-grid button.on { background:var(--accent); color:#fff; }
-  .figures { display:flex; gap:16px; }
-  .fig { flex:1; min-width:0; }
-  .fig .label { opacity:.82; font-size:12px; letter-spacing:.5px; margin-bottom:2px; }
-  .fig .num { font-size:24px; font-weight:700; font-variant-numeric:tabular-nums;
-              line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  /* 收入固定用黄色（两个主题都是这块蓝底，所以只有一个黄） */
-  .fig .num.income { color:var(--income); }
-  /* 结余：没钱（负数）绿色，有钱（正数）白色 */
-  .fig .num.neg { color:#4ade80; }
+  /* 卡片主次：支出是唯一的大字，预算在右边，收入/结余降成底下一行小字。
+     三格平权的时候反而没人知道该先看哪个——支出天天发生，收入一周一次，
+     结余月底才看，重要性本来就不一样。 */
+  /* 2 列 × 3 行，align-items:baseline 让每一行左右两边坐在同一条基线上：
+     标签对标签、金额对金额、底下一行对底下一行。 */
+  .card-top { display:grid; grid-template-columns:minmax(0,1fr) auto;
+              align-items:baseline; column-gap:16px; row-gap:2px; }
+  .ct-label { font-size:12px; opacity:.82; letter-spacing:.5px; }
+  .ct-num { font-size:34px; font-weight:700; font-variant-numeric:tabular-nums;
+            line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ct-foot { font-size:13px; opacity:.92; display:flex; align-items:center; gap:8px;
+             flex-wrap:wrap; min-width:0; margin-top:8px; }
+  .ct-foot b { font-weight:600; color:#fff; font-variant-numeric:tabular-nums; }
+  .ct-foot .sep { opacity:.45; }
+
+  /* 右侧三格各是一个按钮：点哪一行都跳去设置，但文字范围就是点击范围 */
+  .ct-budget { display:inline-block; justify-self:end; border:0; background:none; color:#fff;
+               font-family:inherit; cursor:pointer; padding:0 5px; border-radius:7px;
+               text-align:right; line-height:inherit; }
+  .ct-budget:hover { background:rgba(255,255,255,.16); }
+  .ct-budget.down { margin-top:8px; }
+  .budget-num { font-size:34px; font-weight:700; font-variant-numeric:tabular-nums;
+                line-height:1.15; white-space:nowrap; }
+  /* 没设预算时不摆大数字：那是「还没填」，不是「预算 0」。
+     line-height 抬高到 1.95，让这一行高度仍是 34px 数字的 39px，三行不会错位。 */
+  .budget-num.muted { opacity:.55; font-weight:500; font-size:20px; line-height:1.95; }
+  .budget-left { font-size:13px; opacity:.9; font-variant-numeric:tabular-nums;
+                 white-space:nowrap; }
+  .budget-left.warn { color:#ffe08a; }   /* 85% 起：偏黄，不刺眼 */
+  .budget-left.over { color:#ffc7c7; }   /* 超支 */
+
+  /* 预算进度条：绿 → 黄棕 → 深红，只在快超的时候跳出来说话 */
+  .budget-bar { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .budget-bar[hidden] { display:none; }
+  .budget-bar .bt { flex:1; height:5px; background:rgba(255,255,255,.24);
+                    border-radius:999px; overflow:hidden; }
+  .budget-bar .bf { display:block; height:100%; width:0; border-radius:999px;
+                    background:#22c55e; transition:width .3s ease, background .3s ease; }
+  .budget-bar .bp { font-size:11px; opacity:.88; font-variant-numeric:tabular-nums;
+                    min-width:62px; text-align:right; }
+  /* 窄屏：左右两列一起缩一号，字号仍然逐行同步 */
+  @media (max-width: 560px) {
+    .total-card { padding:16px 16px; }
+    .ct-num { font-size:26px; }
+    .budget-num { font-size:26px; }
+    .budget-num.muted { font-size:16px; line-height:1.87; }
+    .ct-foot { font-size:12px; }
+    .budget-left { font-size:12px; }
+  }
 
   .entry { display:flex; gap:8px; margin:18px 0 6px; }
   .entry input { flex:1; padding:12px 14px; border:1px solid #e2e6ee; border-radius:12px;
@@ -258,9 +298,34 @@
   .pager .jump input:focus { border-color:var(--accent); }
 
   /* 通用设置里的行 */
+  .budget-input { display:flex; align-items:center; gap:5px; }
+  .budget-input input { width:92px; height:38px; padding:0 9px; border:1px solid #e2e6ee;
+                        border-radius:9px; font-size:14px; text-align:right; font-family:inherit;
+                        background:var(--card); color:var(--ink); outline:none;
+                        font-variant-numeric:tabular-nums; box-sizing:border-box; }
+  .budget-input input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(47,124,246,.12); }
+  /* 原生那个细得像线的上下箭头藏掉，换成两个能点中的方块，步进固定 100 */
+  .budget-input input::-webkit-outer-spin-button,
+  .budget-input input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .budget-input input { -moz-appearance:textfield; appearance:textfield; }
+  .step-col { display:flex; flex-direction:column; gap:2px; }
+  .budget-input .step { width:24px; height:18px; padding:0; border:1px solid #e2e6ee;
+                        border-radius:6px; background:#f4f6fa; color:var(--ink);
+                        cursor:pointer; font-size:9px; line-height:1; font-family:inherit;
+                        display:flex; align-items:center; justify-content:center; }
+  .budget-input .step:hover { background:#e6eefc; border-color:#cfdcf5; }
+  .budget-input .step:active { background:#d7e5fd; }
+  [data-theme="dark"] .budget-input input { background:#2a2a2a; border-color:#3f3f3f; color:#e8e8e8; }
+  [data-theme="dark"] .budget-input .step { background:#3a3a3a; border-color:#4a4a4a; color:#e8e8e8; }
+  [data-theme="dark"] .budget-input .step:hover { background:#444; }
   .row-setting { display:flex; justify-content:space-between; align-items:center;
                  gap:12px; padding:10px 0; }
-  .set-title { font-size:13px; color:#334155; }
+  /* 主标题压住描述：13px 标题配 15px 描述是反的，看着像描述才是重点 */
+  .set-title { font-size:15px; color:#334155; }
+  .row-setting .muted { font-size:12px; line-height:1.5; margin-top:2px; color:var(--muted); }
+  /* 设置面板里的整段说明也收小，跟行内描述同一级（别覆盖卡片上的 .budget-num.muted，
+     那个是靠 opacity 在蓝底上变淡的，给了 color 会发脏） */
+  .pane p.muted { font-size:12px; line-height:1.6; color:var(--muted); }
   .switch { width:42px; height:24px; border-radius:999px; border:0; background:#d7dee8;
             position:relative; cursor:pointer; flex:none; transition:background .2s; }
   .switch::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px;
@@ -376,19 +441,35 @@
         <div class="mp-grid" id="mpGrid"></div>
       </div>
     </div>
-    <div class="figures">
-      <div class="fig">
-        <div class="label">本月支出</div>
-        <div class="num" id="expenseNum">¥0.00</div>
+    <!-- 三行两列，逐行基线对齐：
+           本月支出 / 本月预算      ← 同一行
+           ¥2455.63 / ¥3000.00     ← 同一行
+           收入·结余 / 剩余         ← 同一行
+         右侧任意一格都能点，点了去设置里改预算（卡片上不放输入框） -->
+    <div class="card-top" id="cardTop">
+      <div class="ct-label">本月支出</div>
+      <button type="button" class="ct-budget" data-budget title="点一下设置本月预算">
+        <span class="ct-label">本月预算</span>
+      </button>
+
+      <div class="ct-num" id="expenseNum">¥0.00</div>
+      <button type="button" class="ct-budget" data-budget title="点一下设置本月预算">
+        <span class="budget-num" id="budgetNum">未设置</span>
+      </button>
+
+      <div class="ct-foot">
+        <span>本月收入 <b id="incomeNum">¥0.00</b></span>
+        <span class="sep">·</span>
+        <span>本月结余 <b id="balanceNum">+¥0.00</b></span>
       </div>
-      <div class="fig">
-        <div class="label">本月收入</div>
-        <div class="num income" id="incomeNum">¥0.00</div>
-      </div>
-      <div class="fig">
-        <div class="label">本月结余</div>
-        <div class="num" id="balanceNum">¥0.00</div>
-      </div>
+      <button type="button" class="ct-budget down" data-budget title="点一下设置本月预算">
+        <span class="budget-left" id="budgetLeft">点一下设置</span>
+      </button>
+    </div>
+
+    <div class="budget-bar" id="budgetBar" hidden>
+      <span class="bt"><span class="bf" id="budgetFill"></span></span>
+      <span class="bp" id="budgetPct"></span>
     </div>
   </div>
 
@@ -475,6 +556,14 @@
           </svg>
           通用设置
         </button>
+        <button type="button" class="nav" data-pane="budget">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="8"/>
+            <circle cx="12" cy="12" r="3.6"/>
+          </svg>
+          预算
+        </button>
         <button type="button" class="nav" data-pane="model">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round">
@@ -518,6 +607,41 @@
           </div>
 
           <p class="muted">账目存在本机 <b>data/app.db</b>；操作历史保留最近 <b>66 天</b>。</p>
+        </section>
+
+        <section class="pane" id="pane-budget" hidden>
+          <div class="row-setting">
+            <div>
+              <div class="set-title">每月默认预算</div>
+              <div class="muted">设置为 0 即默认不用预算</div>
+            </div>
+            <div class="budget-input">
+              <input id="budDefault" type="number" min="0" step="100" placeholder="0"
+                     inputmode="numeric" autocomplete="off">
+              <span class="step-col">
+                <button type="button" class="step" data-bud="default" data-dir="1" title="加 100">▲</button>
+                <button type="button" class="step" data-bud="default" data-dir="-1" title="减 100">▼</button>
+              </span>
+            </div>
+          </div>
+
+          <div class="row-setting">
+            <div>
+              <div class="set-title" id="budMonthTitle">当月预算</div>
+              <div class="muted">覆盖默认预算</div>
+            </div>
+            <div class="budget-input">
+              <input id="budMonth" type="number" min="0" step="100" placeholder="跟随默认"
+                     inputmode="numeric" autocomplete="off">
+              <span class="step-col">
+                <button type="button" class="step" data-bud="month" data-dir="1" title="加 100">▲</button>
+                <button type="button" class="step" data-bud="month" data-dir="-1" title="减 100">▼</button>
+              </span>
+            </div>
+          </div>
+
+          <p class="muted">预算只管「这个月打算花多少」，跟收入没有任何关系。
+            卡片上显示的是剩余，进度条到 85% 转黄、95% 转红。</p>
         </section>
 
         <section class="pane" id="pane-model" hidden>
@@ -876,18 +1000,60 @@ async function load() {
   await loadStats();
 }
 
-/* 顶部卡片：月份 + 支出 / 收入 / 结余。数字全部来自后端 SQL，这里只负责摆。 */
+/* 顶部卡片：支出大字 + 预算 / 收入 / 结余。数字全部来自后端 SQL，这里只负责摆。 */
 function renderCard(d) {
   $("month").textContent = monthName();
 
-  // 卡片三栏都不带符号（标签已经写了支出/收入），只有结余为正负带 + / −
+  // 卡片上的数字一律白色、不带符号（标签已经写了支出/收入/结余），
+  // 只有结余保留 + / − 区分正负——去掉符号就分不清是赚是亏了。
   $("expenseNum").textContent = "¥" + d.expense_yuan;
   $("incomeNum").textContent = "¥" + d.income_yuan;
 
   const bal = d.balance_cents || 0;
-  const el = $("balanceNum");
-  el.textContent = (bal < 0 ? "−¥" : "+¥") + yuan(Math.abs(bal));
-  el.classList.toggle("neg", bal < 0);
+  $("balanceNum").textContent = (bal < 0 ? "−¥" : "+¥") + yuan(Math.abs(bal));
+
+  paintBudget(d);
+}
+
+/* 预算：只跟「这个月花了多少」比，跟收入没有任何关系。
+   没设时右栏写「未设置」，点一下去设置里填——不拿 0 当预算，也不拿结余冒充。 */
+function paintBudget(d) {
+  const bud = d.budget_cents || 0;
+  const spent = d.expense_cents || 0;
+  const num = $("budgetNum"), left = $("budgetLeft"), bar = $("budgetBar");
+
+  // 记一笔设置里「当月单独设置」的初始值：custom 才是真设过，default 只是跟着默认值
+  budMonthCache = d.budget_source === "custom" ? bud / 100 : null;
+
+  if (!bud) {
+    num.textContent = "未设置";
+    num.classList.add("muted");
+    left.textContent = "点一下设置";
+    left.className = "budget-left";
+    bar.hidden = true;
+    paintBudMonth();                     // 之前设过、后来清掉了，输入框也要跟着空
+    return;
+  }
+
+  num.textContent = "¥" + yuan(bud);
+  num.classList.remove("muted");
+  paintBudMonth();                       // 这个月设过的值，同步进设置面板那一格
+
+  const rest = bud - spent;
+  const pct = Math.round(spent / bud * 100);
+  left.textContent = rest < 0 ? "超支 ¥" + yuan(-rest) : "剩余 ¥" + yuan(rest);
+  left.className = "budget-left" + (rest < 0 ? " over" : pct >= 85 ? " warn" : "");
+
+  bar.hidden = false;
+  $("budgetFill").style.width = Math.min(100, pct) + "%";
+  $("budgetFill").style.background = pct >= 95 ? "#dc2626" : pct >= 85 ? "#d97706" : "#22c55e";
+  $("budgetPct").textContent = "已用 " + pct + "%";
+}
+
+/* 只重画卡片（改预算之后用，不动列表和统计） */
+async function refreshCard() {
+  const d = await (await fetch("/api/summary?month=" + viewMonth)).json();
+  renderCard(d);
 }
 
 /* 切月份：只重画卡片和统计，不动流水列表 */
@@ -1398,6 +1564,78 @@ let asrSetting = "auto";
 let hasKeyCache = false;
 let keyHintCache = "";
 
+/* ---------- 预算 ----------
+   两个数：每月默认（全局）+ 这个月单独设（覆盖默认）。
+   存的是绝对值不是差额：11 月设了 3500，之后把默认改成 4000，11 月还是 3500。
+   预算跟收入没有任何计算关系，它只是一把事先插好的尺子。 */
+let budDefaultCache = 0;      // 每月默认预算（元），0 = 没设
+let budMonthCache = null;     // 当前这个月单独设的（元），null = 跟随默认
+
+function paintBudInputs() {
+  $("budDefault").value = budDefaultCache > 0 ? budDefaultCache : "";
+  paintBudMonth();
+}
+
+/* 只回填「当月」那一格：卡片每次重画都会过这里，别去动默认值那个框 */
+function paintBudMonth() {
+  $("budMonth").value = budMonthCache == null ? "" : budMonthCache;
+  $("budMonthTitle").textContent = budMonthLabel();
+}
+
+/* 今年只写「11 月预算」，往年才补年份——同一个面板翻到去年，光写「11 月」会认错月 */
+function budMonthLabel() {
+  const [y, m] = viewMonth.split("-");
+  const label = Number(m) + " 月预算";
+  return Number(y) === new Date().getFullYear() ? label : `${y} 年 ${label}`;
+}
+
+async function saveBudgetDefault(value) {
+  budDefaultCache = Math.max(0, Math.round(Number(value) || 0));
+  paintBudInputs();
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ monthly_budget: budDefaultCache }),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast("预算没存上：" + (d.detail || "未知错误")); return; }
+    await refreshCard();
+  } catch (err) {
+    toast("预算没存上：" + err.message);
+  }
+}
+
+async function saveBudgetMonth(value) {
+  const raw = String(value == null ? "" : value).trim();
+  budMonthCache = raw === "" ? null : Math.max(0, Math.round(Number(raw) || 0));
+  paintBudMonth();
+  try {
+    const r = await fetch("/api/budget", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month: viewMonth, yuan: budMonthCache }),
+    });
+    const d = await r.json();
+    if (!r.ok) { toast("预算没存上：" + (d.detail || "未知错误")); return; }
+    await refreshCard();
+  } catch (err) {
+    toast("预算没存上：" + err.message);
+  }
+}
+
+/* 上下小箭头，步进 100。空格子按「当前生效的数」起步，不然点一下 ▲ 会从 0 变成 100 */
+function budStep(kind, dir) {
+  const box = kind === "default" ? $("budDefault") : $("budMonth");
+  const typed = String(box.value).trim();
+  // 空格子按「当前生效的数」起步，不然点一下 + 会从 0 变成 100
+  const cur = typed === "" ? (kind === "month" ? budDefaultCache : 0) : (Number(typed) || 0);
+  const next = Math.max(0, cur + dir * 100);
+  box.value = next > 0 ? next : "";
+  if (kind === "default") saveBudgetDefault(next);
+  else saveBudgetMonth(next);
+}
+
 function paintSettings(hasKey) {
   if (hasKey !== undefined) hasKeyCache = !!hasKey;
   const isCloud = asrSetting === "cloud" || (asrSetting === "auto" && hasKeyCache);
@@ -1431,7 +1669,9 @@ async function loadSettings() {
   }
   asrSetting = d.asr_backend || "auto";
   keyHintCache = d.key_hint || "";
+  budDefaultCache = Math.max(0, Math.round(Number(d.monthly_budget) || 0));
   paintSettings(d.has_key);              // Key 状态先画，它不能因为下面的事失败
+  paintBudInputs();
   applyTheme(d.theme || "auto");
   paintLive2d(d.live2d !== false);       // 装饰最后画，出错只影响它自己
 }
@@ -1601,9 +1841,10 @@ $("settingsNav").addEventListener("click", (e) => {
   document.querySelectorAll("#settingsNav .nav")
     .forEach((b) => b.classList.toggle("on", b === item));
   const pane = item.dataset.pane;
-  $("pane-general").hidden = pane !== "general";
-  $("pane-model").hidden = pane !== "model";
-  $("pane-history").hidden = pane !== "history";
+  // 按 data-pane 批量切，加新栏不用回来补一行（漏一行就是一整页空白）
+  document.querySelectorAll(".panes .pane").forEach((p) => {
+    p.hidden = p.id !== "pane-" + pane;
+  });
   if (pane === "history") loadOps();
 });
 
@@ -1612,6 +1853,27 @@ $("settingsBtn").addEventListener("click", () => {
   loadSettings();
 });
 $("settingsClose").addEventListener("click", () => { $("settingsMask").hidden = true; });
+
+/* 卡片右侧那三格：点任意一行都跳到「预算」栏（用事件委托，三行共用一个入口）。
+   焦点落在该改的那一格：本月单独设过就改当月，否则改「每月默认」——不然新用户
+   点进来填了当月，下个月又没了 */
+$("cardTop").addEventListener("click", (e) => {
+  if (!e.target.closest("[data-budget]")) return;
+  $("settingsMask").hidden = false;
+  loadSettings();
+  const nav = document.querySelector('#settingsNav button[data-pane="budget"]');
+  if (nav) nav.click();
+  const box = budMonthCache == null ? $("budDefault") : $("budMonth");
+  box.focus();
+  box.select();
+});
+
+/* 步进按钮和手动输入都走 save，输入框失焦（change）也会存一次，值没变时是空操作 */
+document.querySelectorAll(".budget-input .step").forEach((b) => {
+  b.addEventListener("click", () => budStep(b.dataset.bud, Number(b.dataset.dir)));
+});
+$("budDefault").addEventListener("change", () => saveBudgetDefault($("budDefault").value));
+$("budMonth").addEventListener("change", () => saveBudgetMonth($("budMonth").value));
 
 let settingsDown = false;
 $("settingsMask").addEventListener("mousedown", (e) => { settingsDown = e.target === $("settingsMask"); });
