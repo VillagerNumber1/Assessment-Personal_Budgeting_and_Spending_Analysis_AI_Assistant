@@ -371,14 +371,56 @@
   [data-theme="dark"] .pager button { background:#3a3a3a; border-color:#464646; color:#d6d6d6; }
   [data-theme="dark"] .pager .jump input { background:#242424; border-color:#3a3a3a; color:#e8e8e8; }
 
-  /* 顶部提示条：从上方滑下来 */
-  .toast { position:fixed; left:50%; top:0; z-index:200;
-           transform:translate(-50%, -120%);
-           padding:10px 20px; border-radius:0 0 12px 12px;
-           background:#16a34a; color:#fff; font-size:13px; white-space:nowrap;
-           box-shadow:0 6px 18px rgba(16,24,40,.18);
-           transition:transform .26s ease; }
-  .toast.show { transform:translate(-50%, 0); }
+  /* 右上角通知：从右边滑进来，停 4 秒再收回去（参考 osu! 的 toast tray） */
+  .toasts { position:fixed; top:16px; right:16px; z-index:200;
+            display:flex; flex-direction:column; align-items:flex-end; gap:8px;
+            max-width:min(340px, calc(100vw - 32px)); pointer-events:none; }
+  .toast { pointer-events:auto; max-width:100%; box-sizing:border-box;
+           padding:11px 16px; border-radius:12px;
+           background:#16a34a; color:#fff; font-size:13px; line-height:1.5;
+           box-shadow:0 8px 24px rgba(16,24,40,.18); cursor:pointer;
+           transform:translateX(calc(100% + 24px)); opacity:0;
+           transition:transform .32s cubic-bezier(.22,.61,.36,1), opacity .32s; }
+  .toast.show { transform:translateX(0); opacity:1; }
+  .toast.bad { background:#e5484d; }
+  .toast-t { font-weight:600; }
+  .toast-d { margin-top:3px; font-size:12px; opacity:.92; }
+
+  /* 通知收纳处：设置按钮上方那个信息图标 */
+  .fab-notice { bottom:96px; }
+  .fab-notice .dot { position:absolute; top:5px; right:9px; width:8px; height:8px;
+                     border-radius:50%; background:#e5484d;
+                     border:1.5px solid var(--card); }
+  .fab-notice.on { color:var(--accent); border-color:#c7dbff; }
+
+  .notice-panel { position:fixed; right:22px; bottom:172px; z-index:60;
+                  width:min(320px, calc(100vw - 44px)); max-height:min(52vh, 380px);
+                  display:flex; flex-direction:column; overflow:hidden;
+                  background:var(--card); border:1px solid #e2e6ee; border-radius:14px;
+                  box-shadow:0 12px 32px rgba(16,24,40,.16); }
+  .notice-panel[hidden] { display:none; }
+  .notice-head { display:flex; align-items:center; justify-content:space-between;
+                 padding:10px 14px; border-bottom:1px solid #eef2f8;
+                 font-size:13px; color:#334155; }
+  .notice-head button { border:0; background:transparent; color:#64748b;
+                        font-size:12px; cursor:pointer; padding:2px 4px; }
+  .notice-head button:hover { color:var(--accent); }
+  .notice-list { margin:0; padding:6px; list-style:none; overflow:auto; }
+  .notice-item { display:flex; align-items:flex-start; gap:10px;
+                 padding:8px 10px; border-radius:9px; font-size:13px; color:#334155; }
+  .notice-item + .notice-item { margin-top:2px; }
+  .notice-item.bad .notice-msg { color:#e5484d; }
+  .notice-body { flex:1; min-width:0; }
+  .notice-msg { word-break:break-word; }
+  .notice-desc { margin-top:2px; font-size:12px; color:#94a3b8; word-break:break-word; }
+  .notice-time { flex:none; padding-top:1px; color:#9aa4b2; font-size:11px; }
+  .notice-empty { padding:18px 10px; text-align:center; color:#9aa4b2; font-size:13px; }
+
+  [data-theme="dark"] .notice-panel { background:#2a2a2a; border-color:#3a3a3a;
+                                      box-shadow:0 12px 32px rgba(0,0,0,.5); }
+  [data-theme="dark"] .notice-head { border-color:#333; color:#d6d6d6; }
+  [data-theme="dark"] .notice-item { color:#d6d6d6; }
+  [data-theme="dark"] .fab-notice .dot { border-color:#2a2a2a; }
   .amt-mini { color:#9aa4b2; font-size:11px; margin-left:6px; font-weight:400; }
 
   .mask { position:fixed; inset:0; background:rgba(15,23,42,.35); display:flex;
@@ -544,6 +586,25 @@
   <span>设置</span>
 </button>
 
+<button class="fab fab-notice" id="noticeBtn" title="通知">
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+       stroke-width="1.7" stroke-linecap="round">
+    <circle cx="12" cy="12" r="8.3"/>
+    <path d="M12 11v5.1"/>
+    <circle cx="12" cy="8.1" r=".95" fill="currentColor" stroke="none"/>
+  </svg>
+  <span>通知</span>
+  <span class="dot" id="noticeDot" hidden></span>
+</button>
+
+<div class="notice-panel" id="noticePanel" hidden>
+  <div class="notice-head">
+    <strong>通知</strong>
+    <button type="button" id="noticeClear">清空</button>
+  </div>
+  <ul class="notice-list" id="noticeList"></ul>
+</div>
+
 <div class="mask" id="settingsMask" hidden>
   <div class="dialog wide">
     <div class="settings-body">
@@ -685,7 +746,7 @@
   </div>
 </div>
 
-<div class="toast" id="toast" hidden></div>
+<div class="toasts" id="toasts"></div>
 
 <div class="mask" id="confirmMask" hidden>
   <div class="dialog">
@@ -750,20 +811,115 @@ function waifuSay(text) {
   }
 }
 
-/* 顶部提示条：从上方滑下来，2 秒后自动收回去 */
-let toastTimer = null;
-function toast(msg, ok = true) {
-  const el = $("toast");
-  el.textContent = msg;
-  el.style.background = ok ? "#16a34a" : "#e5484d";
-  el.hidden = false;
-  requestAnimationFrame(() => el.classList.add("show"));
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => { el.hidden = true; }, 300);
-  }, 2200);
+/* 右上角通知：从右边滑进来，停 4 秒再收回去；同时记进「通知」收纳处 */
+const TOAST_MAX = 4;        // 屏幕上最多同时挂几条
+const NOTICE_KEEP = 60;     // 收纳处最多留多少条
+const notices = [];         // { msg, ok, at }
+let unread = 0;
+
+function clockText() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+
+function paintNoticeDot() {
+  const dot = $("noticeDot");
+  if (dot) dot.hidden = unread === 0;
+}
+
+function renderNotices() {
+  const list = $("noticeList");
+  if (!list) return;
+  list.innerHTML = notices.length
+    ? notices.map((n) => `
+        <li class="notice-item${n.ok ? "" : " bad"}">
+          <div class="notice-body">
+            <div class="notice-msg">${esc(n.msg)}</div>
+            ${n.desc ? `<div class="notice-desc">${esc(n.desc)}</div>` : ""}
+          </div>
+          <span class="notice-time">${n.at}</span>
+        </li>`).join("")
+    : '<li class="notice-empty">还没有通知</li>';
+}
+
+/* 记进收纳处；面板正开着就当已读，不再点红点 */
+function remember(msg, ok, desc) {
+  notices.unshift({ msg, ok, desc, at: clockText() });
+  if (notices.length > NOTICE_KEEP) notices.length = NOTICE_KEEP;
+
+  const panel = $("noticePanel");
+  if (panel && !panel.hidden) {
+    renderNotices();
+  } else {
+    unread += 1;
+    paintNoticeDot();
+  }
+}
+
+function hideToast(el) {
+  if (!el || el.dataset.bye) return;
+  el.dataset.bye = "1";
+  el.classList.remove("show");
+  setTimeout(() => el.remove(), 320);
+}
+
+function toast(msg, ok = true, desc = "") {
+  remember(msg, ok, desc);
+
+  const box = $("toasts");
+  if (!box) return;
+
+  const el = document.createElement("div");
+  el.className = "toast" + (ok ? "" : " bad");
+  if (desc) {
+    // 标题 + 说明两行；都过 esc()，别让消息里带标签
+    el.innerHTML = `<div class="toast-t">${esc(msg)}</div><div class="toast-d">${esc(desc)}</div>`;
+  } else {
+    el.textContent = msg;
+  }
+  box.appendChild(el);
+
+  // 先挂进 DOM 再翻 class，否则没有过渡、会直接闪出来
+  requestAnimationFrame(() => el.classList.add("show"));
+
+  // 屏幕上堆太多，就把最早那条收掉
+  while (box.children.length > TOAST_MAX) hideToast(box.firstElementChild);
+
+  const timer = setTimeout(() => hideToast(el), 4000);
+  el.addEventListener("click", () => { clearTimeout(timer); hideToast(el); });
+}
+
+function toggleNotices(force) {
+  const panel = $("noticePanel");
+  const btn = $("noticeBtn");
+  if (!panel) return;
+
+  const open = force === undefined ? panel.hidden : force;
+  panel.hidden = !open;
+  if (btn) btn.classList.toggle("on", open);
+  if (open) {
+    renderNotices();
+    unread = 0;
+    paintNoticeDot();
+  }
+}
+
+if ($("noticeBtn")) $("noticeBtn").addEventListener("click", () => toggleNotices());
+if ($("noticeClear")) {
+  $("noticeClear").addEventListener("click", () => {
+    notices.length = 0;
+    renderNotices();
+  });
+}
+
+/* 点面板外面就收起来 */
+document.addEventListener("click", (e) => {
+  const panel = $("noticePanel");
+  const btn = $("noticeBtn");
+  if (!panel || panel.hidden) return;
+  if (panel.contains(e.target) || (btn && btn.contains(e.target))) return;
+  toggleNotices(false);
+});
 
 async function loadStats() {
   const d = await (await fetch("/api/stats?month=" + viewMonth)).json();
@@ -1015,6 +1171,54 @@ function renderCard(d) {
   paintBudget(d);
 }
 
+/* ---------- 预算提醒 ----------
+   85% 黄、95% 红、超支一档，跟进度条同一套阈值，改那边记得改这边。
+   同一档位只弹一次，档位记在**内存**里（不写 localStorage）：
+     - 85% → 95% 算升级，会再弹一次
+     - 预算调高、档位退回去了，下次再爬上来还能弹
+     - 刷新页面会重新开始，该弹的还会弹一遍——这是有意的，方便调试和演示 */
+const budgetAlertLevel = {};
+
+/* 页面刚打开时卡片还在重画，这时候弹提醒 + 看板娘一起开口太吵。
+   先攒着，3 秒后才允许说话——期间只在内存里记下「该弹哪一档」。 */
+let budgetAlertArmed = false;
+let budgetAlertPending = null;
+
+setTimeout(() => {
+  budgetAlertArmed = true;
+  const p = budgetAlertPending;
+  budgetAlertPending = null;
+  if (p) maybeBudgetAlert(p.ym, p.level, p.rest);
+}, 3000);
+
+const WAIFU_BUDGET = {
+  1: ["预算还剩 {rest} 啦，主人~ awa", "还有 {rest}，省着点喵~"],
+  2: ["只剩 {rest} 了，喵！", "快见底啦主人，还剩 {rest}"],
+  3: ["主人，这是哆啦A梦口袋吗~", "预算破产了喵…呜"],
+};
+
+function maybeBudgetAlert(ym, level, rest) {
+  const last = Number(budgetAlertLevel[ym] || 0);
+  if (level === last) return;          // 同一档，闭嘴
+
+  budgetAlertLevel[ym] = level;
+  if (level < last) return;            // 退回低档只记账，不弹
+
+  const left = "¥" + yuan(Math.max(0, rest));
+  if (level === 1) {
+    toast("可能会超出预算", true, `目前预算还剩下 ${left}`);
+  } else if (level === 2) {
+    toast("即将会超出预算", true, `目前预算还剩下 ${left}，请注意把控`);
+  } else {
+    toast("预算爆炸了", true, "这是人性的扭曲还是道德的沦丧？");
+  }
+
+  const pool = WAIFU_BUDGET[level] || [];
+  if (pool.length) {
+    waifuSay(pool[Math.floor(Math.random() * pool.length)].replace("{rest}", left));
+  }
+}
+
 /* 预算：只跟「这个月花了多少」比，跟收入没有任何关系。
    没设时右栏写「未设置」，点一下去设置里填——不拿 0 当预算，也不拿结余冒充。 */
 function paintBudget(d) {
@@ -1048,6 +1252,13 @@ function paintBudget(d) {
   $("budgetFill").style.width = Math.min(100, pct) + "%";
   $("budgetFill").style.background = pct >= 95 ? "#dc2626" : pct >= 85 ? "#d97706" : "#22c55e";
   $("budgetPct").textContent = "已用 " + pct + "%";
+
+  // 只在看本月时提醒：翻旧月份不该弹今天的预算
+  if (isThisMonth()) {
+    const level = rest < 0 ? 3 : pct >= 95 ? 2 : pct >= 85 ? 1 : 0;
+    if (budgetAlertArmed) maybeBudgetAlert(viewMonth, level, rest);
+    else budgetAlertPending = { ym: viewMonth, level, rest };   // 3 秒后再说话
+  }
 }
 
 /* 只重画卡片（改预算之后用，不动列表和统计） */
@@ -1547,6 +1758,16 @@ async function stopRec() {
   if (!text) { playOne(soundFail); hint("没听清，再说一次？", true); return; }
 
   hint(`听到了：<b>${esc(text)}</b>`);
+
+  // 语音也可能是在问账：跟打字框共用同一套判断，
+  // 别把「昨天花多少」当成一笔账存进去（存了还会被「没听出金额」挡回来）
+  if (looksLikeQuery(text)) {
+    playOne(soundSuccess);
+    flashSearch();
+    await askQuery(text);
+    return;
+  }
+
   const saved = await create(text);          // 拾音完直接入库
   playOne(saved ? soundSuccess : soundFail); // 入库成功 / 失败 各一个提示音
 }
@@ -1589,7 +1810,7 @@ function budMonthLabel() {
   return Number(y) === new Date().getFullYear() ? label : `${y} 年 ${label}`;
 }
 
-async function saveBudgetDefault(value) {
+async function saveBudgetDefault(value, quiet = false) {
   budDefaultCache = Math.max(0, Math.round(Number(value) || 0));
   paintBudInputs();
   try {
@@ -1599,14 +1820,18 @@ async function saveBudgetDefault(value) {
       body: JSON.stringify({ monthly_budget: budDefaultCache }),
     });
     const d = await r.json();
-    if (!r.ok) { toast("预算没存上：" + (d.detail || "未知错误")); return; }
+    if (!r.ok) { toast("预算没存上：" + (d.detail || "未知错误"), false); return; }
+    if (!quiet) {
+      toast(budDefaultCache > 0 ? "每月默认预算修改成功" : "每月默认预算已清空", true,
+            budDefaultCache > 0 ? `现在是 ¥${budDefaultCache}` : "之后新开的月份都不再带默认值");
+    }
     await refreshCard();
   } catch (err) {
-    toast("预算没存上：" + err.message);
+    toast("预算没存上：" + err.message, false);
   }
 }
 
-async function saveBudgetMonth(value) {
+async function saveBudgetMonth(value, quiet = false) {
   const raw = String(value == null ? "" : value).trim();
   budMonthCache = raw === "" ? null : Math.max(0, Math.round(Number(raw) || 0));
   paintBudMonth();
@@ -1617,14 +1842,19 @@ async function saveBudgetMonth(value) {
       body: JSON.stringify({ month: viewMonth, yuan: budMonthCache }),
     });
     const d = await r.json();
-    if (!r.ok) { toast("预算没存上：" + (d.detail || "未知错误")); return; }
+    if (!r.ok) { toast("预算没存上：" + (d.detail || "未知错误"), false); return; }
+    if (!quiet) {
+      toast(budMonthCache == null ? `${budMonthLabel()}已清空` : `${budMonthLabel()}修改成功`, true,
+            budMonthCache == null ? "继续跟随每月默认" : `现在是 ¥${budMonthCache}`);
+    }
     await refreshCard();
   } catch (err) {
-    toast("预算没存上：" + err.message);
+    toast("预算没存上：" + err.message, false);
   }
 }
 
 /* 上下小箭头，步进 100。空格子按「当前生效的数」起步，不然点一下 ▲ 会从 0 变成 100 */
+let budStepTimer = null;
 function budStep(kind, dir) {
   const box = kind === "default" ? $("budDefault") : $("budMonth");
   const typed = String(box.value).trim();
@@ -1632,8 +1862,16 @@ function budStep(kind, dir) {
   const cur = typed === "" ? (kind === "month" ? budDefaultCache : 0) : (Number(typed) || 0);
   const next = Math.max(0, cur + dir * 100);
   box.value = next > 0 ? next : "";
-  if (kind === "default") saveBudgetDefault(next);
-  else saveBudgetMonth(next);
+
+  // 连点箭头先把保存按住：只发最后那一次，
+  // 不然每点一下都请求 + 重画 + 弹预算提醒，连点几下就叠一屏通知
+  clearTimeout(budStepTimer);
+  budStepTimer = setTimeout(() => {
+    const raw = String(box.value).trim();
+    const value = raw === "" ? (kind === "month" ? null : 0) : Math.round(Number(raw) || 0);
+    if (kind === "default") saveBudgetDefault(value, true);
+    else saveBudgetMonth(value, true);
+  }, 320);
 }
 
 function paintSettings(hasKey) {
@@ -1874,6 +2112,13 @@ document.querySelectorAll(".budget-input .step").forEach((b) => {
 });
 $("budDefault").addEventListener("change", () => saveBudgetDefault($("budDefault").value));
 $("budMonth").addEventListener("change", () => saveBudgetMonth($("budMonth").value));
+
+/* 回车当成「确认」：先失焦，change 照常触发，只保存一次 */
+["budDefault", "budMonth"].forEach((id) => {
+  $(id).addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); e.target.blur(); }
+  });
+});
 
 let settingsDown = false;
 $("settingsMask").addEventListener("mousedown", (e) => { settingsDown = e.target === $("settingsMask"); });
