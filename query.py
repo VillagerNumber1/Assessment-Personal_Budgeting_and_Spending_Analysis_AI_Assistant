@@ -12,10 +12,10 @@ DSL 长这样：
 SQL 仍然由这里拼，白名单 + 参数绑定，不让模型碰 SQL）。
 """
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import storage
-from parser import CATEGORY_WORDS
+from parser import CATEGORY_WORDS, find_time
 
 # 聚合方式 -> SQL 片段
 AGG_SQL = {
@@ -105,38 +105,75 @@ def parse_group(q: str) -> str:
     return "none"
 
 
+# 「21点」问的是几点到几点：用户 2026-11-24 定为「21点到23点」，即 2 小时窗口
+HOUR_WINDOW = 2
+
+
+def _hour_range(day: date, hour: int) -> dict:
+    """把「某天的某个整点」变成一个 [HH:00, HH+2:00) 的区间。"""
+    start = datetime(day.year, day.month, day.day, hour, 0)
+    end = start + timedelta(hours=HOUR_WINDOW)
+    # 跨零点时写清楚「次日」，不然 22:00~00:00 看着像零长度
+    tail = f"次日 {end:%H:%M}" if end.date() != start.date() else f"{end:%H:%M}"
+    return {
+        "start": start.strftime("%Y-%m-%d %H:%M"),
+        "end": end.strftime("%Y-%m-%d %H:%M"),
+        "label": f"{day.isoformat()} {hour:02d}:00~{tail} ",   # 末尾留空格，拼「一共」时不断开
+    }
+
+
 def parse_question(q: str, today: date | None = None) -> dict:
-    """一句话 -> DSL。"""
+    """一句话 -> DSL。
+
+    除了「哪个月 / 哪天」，还认「几点」：句子里有 `21点` 这类说法、
+    而且时间范围正好是某一天，就收窄成 2 小时窗口。
+    """
     today = today or date.today()
     start, end, label = parse_time(q, today)
-    return {
+
+    base = {
         "question": q,
         "metric": parse_metric(q),
         "group_by": parse_group(q),
         "kind": parse_kind(q),
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-        "label": label,
         "categories": parse_category(q),
     }
+
+    hm = find_time(q)
+    if hm and start == end:                 # 同一天 + 有钟点，才收窄
+        return {**base, **_hour_range(start, hm[0])}
+
+    return {**base, "start": start.isoformat(), "end": end.isoformat(), "label": label}
+
+
+def _end_exclusive(end: str) -> str:
+    """区间右边界，**不含**。
+
+    只给到天的（`2026-11-23`）→ 次日 00:00，这样当天带时分的账也能被包含；
+    已经给了时分的（`2026-11-23 23:00`）→ 原样用。
+    用 `<` 而不是 `between`，否则「21点~23点」会把 23:00 那笔也算进来。
+    """
+    if len(end) > 10:
+        return end
+    return (date.fromisoformat(end) + timedelta(days=1)).isoformat() + " 00:00"
 
 
 def run(dsl: dict) -> list[dict]:
     """按 DSL 查库。SQL 全部由代码拼，参数绑定，用户输入不进 SQL。"""
+    lo, hi = dsl["start"], _end_exclusive(dsl["end"])
+
     # 结余 = 收入 − 支出，两种方向都要算，所以不套用 kind 过滤
     if dsl["metric"] == "balance":
         sql = ("select coalesce(sum(case when kind = 'income' then amount_cents"
                " else -amount_cents end), 0) as value, count(*) as count"
                " from transactions where status = 'confirmed' and deleted_at is null"
-               " and occurred_at between ? and ?")
-        return storage.query(sql, (dsl["start"], dsl["end"] + " 23:59"))
+               " and occurred_at >= ? and occurred_at < ?")
+        return storage.query(sql, (lo, hi))
 
     # deleted_at is null 这条不能少：删掉的账还留在表里，漏了就会算进查账结果
     where = ["status = 'confirmed'", "deleted_at is null", "kind = ?",
-             "occurred_at between ? and ?"]
-    # 结束日补上 23:59：occurred_at 可能带时间（2026-11-30 14:30），
-    # 直接比 '2026-11-30' 会把它排除掉。补时间还能继续走索引。
-    params: list = [dsl.get("kind", "expense"), dsl["start"], dsl["end"] + " 23:59"]
+             "occurred_at >= ?", "occurred_at < ?"]
+    params: list = [dsl.get("kind", "expense"), lo, hi]
 
     if dsl["categories"]:
         marks = ",".join("?" * len(dsl["categories"]))
@@ -278,10 +315,26 @@ def dsl_from_llm(raw: dict, today: date) -> dict | None:
     }
 
 
+def _time_note(dsl: dict) -> str:
+    """钟点查询的免责提示。
+
+    「昨天21点」这种窗口只能命中带时分的账；同一天里只写到天的账没法判断
+    属不属于这个钟点，所以不进结果——但必须说一声，不然用户会以为这就是全部。
+    """
+    if len(dsl.get("start", "")) <= 10:
+        return ""                      # 不是钟点查询，没什么可提示的
+    day = dsl["start"][:10]
+    n = storage.count_dateless(day)
+    if not n:
+        return ""
+    return f"提示：{day} 还有 {n} 笔只记了日期、没记时间，没算进这个钟点范围，结果可能不准"
+
+
 def ask(q: str, today: date | None = None, api_key: str | None = None) -> dict:
     """完整流程：问题 -> DSL -> 查询 -> 回答。返回给前端展示。
 
     返回里的 ok=False 表示「这句话没看懂」，前端应该照实说，不要显示数字。
+    note 是一句补充说明（比如「这天有几笔没记时间」），前端显示成小字。
     """
     today = today or date.today()
 
@@ -290,7 +343,8 @@ def ask(q: str, today: date | None = None, api_key: str | None = None) -> dict:
         dsl = parse_question(q, today)
         rows = run(dsl)
         return {"ok": True, "source": "rules", "question": q, "dsl": dsl,
-                "rows": rows, "answer": to_sentence(dsl, rows)}
+                "rows": rows, "answer": to_sentence(dsl, rows),
+                "note": _time_note(dsl)}
 
     # 规则看不出来：问模型「这到底是不是在问账」
     import llm                                  # 延迟 import，避免 query <-> llm 相互牵扯
@@ -301,7 +355,9 @@ def ask(q: str, today: date | None = None, api_key: str | None = None) -> dict:
             dsl["question"] = q
             rows = run(dsl)
             return {"ok": True, "source": "llm", "question": q, "dsl": dsl,
-                    "rows": rows, "answer": to_sentence(dsl, rows)}
+                    "rows": rows, "answer": to_sentence(dsl, rows),
+                    "note": _time_note(dsl)}
 
     return {"ok": False, "source": "none", "question": q, "dsl": None, "rows": [],
-            "answer": "没看懂这句话。可以问「这个月花了多少」「上个月吃饭多少钱」这种。"}
+            "answer": "没看懂这句话。可以问「这个月花了多少」「上个月吃饭多少钱」这种。",
+            "note": ""}
