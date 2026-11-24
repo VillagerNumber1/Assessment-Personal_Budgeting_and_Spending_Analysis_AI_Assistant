@@ -82,6 +82,13 @@ class SettingsBody(BaseModel):
     api_key: str | None = None          # 传空字符串 = 清空；不传 = 不改
     live2d: bool | None = None
     theme: str | None = None
+    monthly_budget: float | None = None  # 每月默认预算（元）。传 0 = 不用预算
+
+
+class BudgetBody(BaseModel):
+    """POST /api/budget 的请求体：给某个月单独设预算。"""
+    month: str | None = None            # 不传就是本月
+    yuan: float | None = None           # 不传 / 0 = 清除，回到跟随默认
 
 
 _transcriber = None
@@ -203,6 +210,8 @@ def write_settings(body: SettingsBody) -> dict:
         "live2d": body.live2d,
         "theme": body.theme,
     }
+    if body.monthly_budget is not None:
+        updates["monthly_budget"] = check_budget_yuan(body.monthly_budget)
     if body.api_key is not None:
         updates["api_key"] = body.api_key.strip()
     runtime.save(updates)
@@ -250,10 +259,11 @@ def check_month(value: str | None) -> str:
 
 @app.get("/api/summary")
 def summary(month: str | None = None) -> dict:
-    """某个月的支出 / 收入 / 结余 + 最近 10 条。month 形如 2026-11，不传就是本月。"""
+    """某个月的支出 / 收入 / 结余 / 预算 + 最近 10 条。month 形如 2026-11，不传就是本月。"""
     ym = check_month(month)
     expense = storage.month_total(ym, kind="expense")
     income = storage.month_total(ym, kind="income")
+    budget, budget_src = _budget_for(ym)
     return {
         "month": ym,
         # total_cents / total_yuan 保留：老前端和 README 都按「本月支出」在用
@@ -265,8 +275,56 @@ def summary(month: str | None = None) -> dict:
         "expense_yuan": storage.yuan(expense),
         "income_yuan": storage.yuan(income),
         "balance_yuan": storage.yuan(income - expense),
+        # 预算：None 表示这个月没设（前端显示「未设置」，别拿 0 当预算用）
+        "budget_cents": budget,
+        "budget_source": budget_src,
         "recent": storage.list_recent(10),
     }
+
+
+def check_budget_yuan(value: float | None) -> float:
+    """预算校验：单位元，0 表示「不用预算」，所以允许；负数和大数挡住。
+
+    预算值本身也要过一遍校验——它也是一笔钱，不能因为来自设置面板就当成可信的。
+    """
+    if value is None:
+        return 0.0
+    if value != value:                      # NaN：TypeError 之前先挡住
+        raise HTTPException(status_code=400, detail="预算得是一个数")
+    if value < 0:
+        raise HTTPException(status_code=400, detail="预算不能是负数")
+    if value > 1_000_000:
+        raise HTTPException(status_code=400, detail="预算最多 100 万元")
+    return round(value, 2)
+
+
+def _budget_for(ym: str) -> tuple[int | None, str | None]:
+    """某个月真正生效的预算：(金额分, 来源)。
+
+    来源 custom = 这个月单独设过；default = 跟着「每月默认预算」走；None = 压根没设。
+    预算只管「这个月打算花多少」，跟收入没有任何关系——它是一把事先插好的尺子，
+    不随这个月进账多少而移动。
+    """
+    custom = storage.get_budget(ym)
+    if custom is not None:
+        return custom, "custom"
+    default = runtime.monthly_budget()
+    if default > 0:
+        return default, "default"
+    return None, None
+
+
+@app.post("/api/budget")
+def write_budget(body: BudgetBody) -> dict:
+    """给某个月单独设预算。yuan 传 0 / null 就是清除，回到「跟随默认」。
+
+    存的是**绝对值**，不是相对默认值的差额：11 月设了 3500，之后把默认值改成 4000，
+    11 月还是 3500。历史不该被后来的设置改写。
+    """
+    ym = check_month(body.month)
+    storage.set_budget(ym, int(round(check_budget_yuan(body.yuan) * 100)) or None)
+    budget, src = _budget_for(ym)
+    return {"month": ym, "budget_cents": budget, "budget_source": src}
 
 
 @app.get("/api/transactions")

@@ -62,6 +62,15 @@ create table if not exists queries (
 );
 
 create index if not exists idx_q_time on queries(created_at);
+
+-- 预算：只存「单独设过」的月份。
+-- 没记录的月份跟随设置里的「每月默认预算」，所以改默认值会连带影响所有没单独设过的月份。
+-- 一旦某个月单独设过，它就固定下来，之后改默认值不会动它——历史不能被未来的设置改写。
+create table if not exists budgets (
+    month        text    primary key,     -- 2026-11
+    amount_cents integer not null,        -- 本月总预算（分）
+    updated_at   text    not null default (datetime('now', 'localtime'))
+);
 """
 
 
@@ -445,6 +454,36 @@ def month_total(year_month: str | None = None, kind: str = "expense") -> int:
             (kind if kind in KINDS else "expense", f"{ym}%"),
         ).fetchone()
         return int(row["total"])
+    finally:
+        con.close()
+
+
+def get_budget(year_month: str) -> int | None:
+    """某个月单独设过的预算（分）。没设过返回 None，由调用方去用默认值。"""
+    con = _connect()
+    try:
+        row = con.execute(
+            "select amount_cents from budgets where month = ?", (year_month,)).fetchone()
+        return int(row["amount_cents"]) if row else None
+    finally:
+        con.close()
+
+
+def set_budget(year_month: str, amount_cents: int | None) -> None:
+    """设某个月的预算。传 None 或 0 就是删掉，让它回到「跟随默认值」。"""
+    con = _connect()
+    try:
+        if not amount_cents:
+            con.execute("delete from budgets where month = ?", (year_month,))
+        else:
+            con.execute(
+                "insert into budgets (month, amount_cents, updated_at)"
+                " values (?, ?, datetime('now', 'localtime'))"
+                " on conflict(month) do update set"
+                " amount_cents = excluded.amount_cents, updated_at = excluded.updated_at",
+                (year_month, int(amount_cents)),
+            )
+        con.commit()
     finally:
         con.close()
 
