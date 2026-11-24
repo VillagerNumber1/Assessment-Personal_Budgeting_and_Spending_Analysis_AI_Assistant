@@ -315,6 +315,13 @@
                         display:flex; align-items:center; justify-content:center; }
   .budget-input .step:hover { background:#e6eefc; border-color:#cfdcf5; }
   .budget-input .step:active { background:#d7e5fd; }
+  .bg-actions { display:flex; gap:6px; flex:none; }
+  .mini-btn { padding:7px 12px; border:1px solid #e2e6ee; border-radius:9px;
+              background:#fff; color:#475569; font-size:13px; cursor:pointer;
+              font-family:inherit; white-space:nowrap; }
+  .mini-btn:hover { border-color:#c7dbff; color:var(--accent); }
+  [data-theme="dark"] .mini-btn { background:#3a3a3a; border-color:#4a4a4a; color:#d6d6d6; }
+  [data-theme="dark"] .mini-btn:hover { border-color:#5a7bb8; color:#9ec1ff; }
   [data-theme="dark"] .budget-input input { background:#2a2a2a; border-color:#3f3f3f; color:#e8e8e8; }
   [data-theme="dark"] .budget-input .step { background:#3a3a3a; border-color:#4a4a4a; color:#e8e8e8; }
   [data-theme="dark"] .budget-input .step:hover { background:#444; }
@@ -665,6 +672,18 @@
             <button type="button" data-theme="light">白天</button>
             <button type="button" data-theme="dark">黑夜</button>
             <button type="button" data-theme="auto">跟随系统</button>
+          </div>
+
+          <div class="row-setting">
+            <div>
+              <div class="set-title">卡片背景</div>
+              <div class="muted">给最上面那张卡换张图，png / jpg / webp，8 MB 以内</div>
+            </div>
+            <div class="bg-actions">
+              <input id="bgFile" type="file" accept="image/*" hidden>
+              <button type="button" class="mini-btn" id="bgPick">选图片</button>
+              <button type="button" class="mini-btn" id="bgClear">恢复默认</button>
+            </div>
           </div>
 
           <p class="muted">账目存在本机 <b>data/app.db</b>；操作历史保留最近 <b>66 天</b>。</p>
@@ -1912,7 +1931,64 @@ async function loadSettings() {
   paintBudInputs();
   applyTheme(d.theme || "auto");
   paintLive2d(d.live2d !== false);       // 装饰最后画，出错只影响它自己
+  applyCardBg(d.has_background === true);
 }
+
+/* ---------- 卡片背景 ----------
+   图由后端存在 data/backgrounds，前端只认一个 URL。
+   上面盖一层半透明蓝，保证白字压在任何图上都看得清。 */
+function applyCardBg(has) {
+  const card = document.querySelector(".total-card");
+  if (!card) return;
+
+  if (has) {
+    // 不用蓝色蒙版（那样等于换了张蓝纸）：把图压暗一档就够了，
+    // 上淡下浓，正好压住底下一行小字，数据始终是白色的主角。
+    card.style.backgroundImage =
+      `linear-gradient(rgba(15,23,42,.40), rgba(15,23,42,.62)), url("/api/background?v=${Date.now()}")`;
+    card.style.backgroundSize = "cover";
+    card.style.backgroundPosition = "center";
+    card.classList.add("has-bg");
+  } else {
+    card.style.backgroundImage = "";
+    card.style.backgroundSize = "";
+    card.style.backgroundPosition = "";
+    card.classList.remove("has-bg");
+  }
+}
+
+async function uploadCardBg(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file, file.name);
+  try {
+    const r = await fetch("/api/background", { method: "POST", body: form });
+    const d = await r.json();
+    if (!r.ok) { toast("背景没换上：" + (d.detail || "未知错误"), false); return; }
+    applyCardBg(true);
+    toast("卡片背景换好了", true, file.name);
+  } catch (err) {
+    toast("背景没换上：" + err.message, false);
+  }
+}
+
+async function clearCardBg() {
+  try {
+    const r = await fetch("/api/background", { method: "DELETE" });
+    if (!r.ok) { toast("没清掉，再试一次", false); return; }
+    applyCardBg(false);
+    toast("卡片背景已恢复默认");
+  } catch (err) {
+    toast("没清掉：" + err.message, false);
+  }
+}
+
+$("bgPick").addEventListener("click", () => $("bgFile").click());
+$("bgFile").addEventListener("change", (e) => {
+  uploadCardBg(e.target.files[0]);
+  e.target.value = "";                 // 同一个文件再选一次，也要能再触发 change
+});
+$("bgClear").addEventListener("click", clearCardBg);
 
 /* ---------- 主题 ---------- */
 let themeSetting = "auto";
@@ -1963,9 +2039,13 @@ function applyLive2d() {
   }
 }
 
-// 看板娘脚本在页面最底部那块生成区，主脚本解析时它还没到：
-// DOM 解析完再对齐一次，免得出现「开关是开的，人却没出来」
+// 看板娘脚本在页面最底部那块生成区，主脚本解析时它还没到；
+// 而且它自己还要异步从 CDN 拉运行时，所以第一次调用经常太早——
+// 对象有了、引擎还没好，表现就是「开关是开的，人却迟迟不出来」。
+// setEnabled(true) 对「已经开着」是安全的（内部会再 start() 一次，等于重试），
+// 所以这里隔几个时间点补几次，直到它真的站到那儿为止。
 document.addEventListener("DOMContentLoaded", applyLive2d);
+[0, 300, 1000, 2000, 3500].forEach((ms) => setTimeout(applyLive2d, ms));
 
 $("live2dSwitch").addEventListener("click", async () => {
   paintLive2d(!live2dOn);

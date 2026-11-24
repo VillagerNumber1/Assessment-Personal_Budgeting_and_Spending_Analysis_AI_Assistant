@@ -32,6 +32,11 @@ from config import DATA_DIR, DEEPSEEK_API_KEY
 TEMPLATES = Path(__file__).parent / "templates"
 UPLOAD_DIR = DATA_DIR / "uploads"
 
+# 卡片背景图：存在 data/ 里（跟着数据卷走，不进仓库也不进镜像）
+BACKGROUND_DIR = DATA_DIR / "backgrounds"
+BG_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+BG_MAX_BYTES = 8 * 1024 * 1024
+
 MAX_AMOUNT_CENTS = 10_000_000     # 超过 10 万要二次确认
 HARD_MAX_CENTS = 100_000_000      # 超过 100 万直接拒绝（确认了也不行）
 MAX_TEXT_LEN = 200
@@ -184,15 +189,30 @@ def sound_manifest() -> dict:
     return audio_fx.manifest()
 
 
-@app.get("/api/settings")
-def read_settings() -> dict:
-    """给设置面板用的状态。**只回脱敏后的 key**，完整 key 永远不出后端。"""
+def _background_file() -> Path | None:
+    """当前卡片背景文件；没设过、或者文件被删了，都返回 None。"""
+    name = str(runtime.load().get("background") or "")
+    if not name:
+        return None
+    path = BACKGROUND_DIR / name
+    return path if path.is_file() else None
+
+
+def _settings_payload() -> dict:
+    """设置接口的返回：key 只给脱敏形式；顺带告诉前端卡片有没有背景图。"""
     data = runtime.load()
     key = current_key()
     data.pop("api_key", None)
     data["has_key"] = bool(key)
     data["key_hint"] = runtime.mask_key(key)
+    data["has_background"] = _background_file() is not None
     return data
+
+
+@app.get("/api/settings")
+def read_settings() -> dict:
+    """给设置面板用的状态。**只回脱敏后的 key**，完整 key 永远不出后端。"""
+    return _settings_payload()
 
 
 @app.post("/api/settings")
@@ -216,13 +236,46 @@ def write_settings(body: SettingsBody) -> dict:
         updates["api_key"] = body.api_key.strip()
     runtime.save(updates)
     reset_transcriber()
+    return _settings_payload()
 
-    data = runtime.load()
-    key = current_key()
-    data.pop("api_key", None)
-    data["has_key"] = bool(key)
-    data["key_hint"] = runtime.mask_key(key)
-    return data
+
+@app.get("/api/background")
+def get_background() -> FileResponse:
+    """当前卡片背景图。没设过就 404，前端据此回退到默认渐变。"""
+    path = _background_file()
+    if path is None:
+        raise HTTPException(status_code=404, detail="还没有设置背景图")
+    return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/background")
+async def upload_background(file: UploadFile = File(...)) -> dict:
+    """换一张卡片背景。只留一份，换新的会把旧的删掉。"""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in BG_SUFFIXES:
+        raise HTTPException(status_code=400, detail="只认 png / jpg / webp / gif")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件是空的")
+    if len(raw) > BG_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="图片太大了，换 8 MB 以内的")
+
+    BACKGROUND_DIR.mkdir(parents=True, exist_ok=True)
+    for old in BACKGROUND_DIR.glob("bg.*"):
+        old.unlink(missing_ok=True)       # 只留一张，别让旧图堆在数据卷里
+    name = "bg" + suffix
+    (BACKGROUND_DIR / name).write_bytes(raw)
+    runtime.save({"background": name})
+    return {"ok": True, "name": name}
+
+
+@app.delete("/api/background")
+def clear_background() -> dict:
+    """恢复默认渐变，顺手把文件删掉。"""
+    for old in BACKGROUND_DIR.glob("bg.*"):
+        old.unlink(missing_ok=True)
+    runtime.save({"background": ""})
+    return {"ok": True}
 
 
 @app.get("/api/stats")

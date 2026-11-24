@@ -17,6 +17,7 @@ DEFAULTS = {
     "live2d": True,          # 看板娘默认开（具体渲染见 HANDOFF_LIVE2D.md）
     "theme": "auto",         # light / dark / auto
     "monthly_budget": 0,     # 每月默认预算（元）。0 = 没设，卡片上不显示预算
+    "background": "",        # 卡片背景图文件名；空 = 用默认渐变
 }
 
 
