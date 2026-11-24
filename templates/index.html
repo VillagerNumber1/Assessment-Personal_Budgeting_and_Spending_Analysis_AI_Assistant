@@ -44,6 +44,10 @@
   /* 查账结果跟搜索框同一列 */
   .qresult { grid-column:2; min-width:0; }
   .qresult .qanswer { font-size:14px; line-height:1.5; color:var(--ink); }
+  /* 补充提示（比如「这天有 3 笔没记时间」）：琥珀色小字，跟答案分开 */
+  .qresult .qnote { margin-top:4px; font-size:12px; line-height:1.5; color:#b45309; }
+  .qresult .qnote[hidden] { display:none; }
+  [data-theme="dark"] .qresult .qnote { color:#fbbf24; }
   @media (max-width: 720px) {
     .topwrap { grid-template-columns:minmax(0,1fr); }
     .topbar .brand, .topbar .search, .qresult { grid-column:1; }
@@ -126,7 +130,6 @@
                cursor:pointer; font-size:12px; padding:0; }
   .meta .del:hover { color:var(--red); }
   .meta > span { text-align:right; }
-  .caret { display:inline-block; width:12px; font-style:normal; }
   .edit { border:0; background:none; color:var(--accent); font-size:12px; cursor:pointer; padding:0 4px; }
   .empty { color:var(--muted); text-align:center; padding:32px 0; }
   /* 本月 vs 上月的结论：这是「提示」的数据版，看板娘关掉也照样显示 */
@@ -146,10 +149,37 @@
   .trend .col { width:44px; flex:none; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:4px; }
   .trend .bar { width:100%; background:#c7dbff; border-radius:6px 6px 0 0; }
   .trend .lbl { font-size:11px; color:var(--muted); }
-  .logs { margin-top:8px; padding-top:8px; border-top:1px solid #e2e6ee; font-size:12px; color:var(--muted); }
+  /* 展开区：虚线就画在「记账于 2026-11-23 ▾」下面，点它就是展开 */
+  .ledger-day { grid-column:1; justify-self:end; border:0; background:none; padding:0 0 1px;
+                font:inherit; color:var(--muted); cursor:pointer;
+                border-bottom:1px dashed #9aa4b2; white-space:nowrap; }
+  .ledger-day:hover { color:var(--accent); border-bottom-color:var(--accent); }
+  .ledger-day[aria-expanded="true"] { color:var(--accent); border-bottom-style:solid; }
+  .ledger-day .caret { display:inline-block; width:10px; font-style:normal; margin-left:2px;
+                       transition:transform .15s ease; }
+  .ledger-day[aria-expanded="true"] .caret { transform:rotate(180deg); }
+  /* 展开区跟上面用一条**极淡的实线**分开——虚线只保留「记账于」那一条，别重复 */
+  .logs { margin-top:8px; padding-top:8px; border-top:1px solid #eef1f6;
+          font-size:12px; color:var(--muted); }
   .logs[hidden] { display:none; }
-  .logs div { margin:4px 0; }
-  .logs .mark { font-weight:800; margin-right:6px; }
+  .logs-head { margin-bottom:8px; }
+  /* 四列表格：内容列自动换行，其余不换行 */
+  .logs-table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  .logs-table th { text-align:left; font-weight:600; color:var(--muted); font-size:11px;
+                   padding:0 8px 5px 0; border-bottom:1px solid #eceff4; }
+  .logs-table td { padding:5px 8px 5px 0; border-bottom:1px solid #f2f4f8; vertical-align:top; }
+  .logs-table tr:last-child td { border-bottom:0; }
+  .logs-table td.t { white-space:nowrap; position:relative; }
+  .logs-table td.mk::before { content:"·"; position:absolute; left:-9px; top:5px;
+                              font-weight:800; color:var(--ink); }
+  .logs-table td.c { white-space:normal; word-break:break-word; color:var(--ink); }
+  .logs-table td.m { white-space:nowrap; text-align:right; color:var(--ink); }
+  .logs-table th:last-child { text-align:right; }
+  /* 跟上一版不一样的那一格标一下，一眼看出这次改了什么 */
+  .logs-table td.chg { background:#fff8e1; border-radius:5px; }
+  [data-theme="dark"] .logs-table td.chg { background:#3d3520; }
+  [data-theme="dark"] .logs-table th,
+  [data-theme="dark"] .logs-table td { border-color:#3a3a3a; }
   .dsl { font-size:12px; color:#94a3b8; margin-top:6px; line-height:1.6; word-break:break-all; }
 
   /* 右下角设置入口 */
@@ -217,6 +247,15 @@
                   border-radius:9px; font-size:12px; color:#64748b; cursor:pointer; }
   .pager button:disabled { opacity:.4; cursor:default; }
   .pager span { font-size:12px; color:var(--muted); }
+  /* 跳转：页码输入框，超出范围会自动夹到首页/末页 */
+  .pager .jump { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+  .pager .jump input { width:46px; padding:5px 6px; border:1px solid #e2e6ee; border-radius:8px;
+                       font-size:12px; text-align:center; font-family:inherit; outline:none;
+                       background:var(--card); color:var(--ink);
+                       -moz-appearance:textfield; appearance:textfield; }
+  .pager .jump input::-webkit-outer-spin-button,
+  .pager .jump input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .pager .jump input:focus { border-color:var(--accent); }
 
   /* 通用设置里的行 */
   .row-setting { display:flex; justify-content:space-between; align-items:center;
@@ -239,13 +278,20 @@
   [data-theme="dark"] .set-title { color:#d6d6d6; }
   [data-theme="dark"] .ops li,
   [data-theme="dark"] .logs,
-  [data-theme="dark"] .feat li,
-  [data-theme="dark"] .time-toggle { border-color:#3a3a3a; }
+  [data-theme="dark"] .feat li { border-color:#3a3a3a; }
+  [data-theme="dark"] .ledger-day { color:#9aa0a6; border-bottom-color:#6b7280; }
+  [data-theme="dark"] .logs { border-top-color:#3a3a3a; }
   [data-theme="dark"] .bar-track { background:#383838; }
   [data-theme="dark"] .trend .bar { background:#4a5a6d; }
   [data-theme="dark"] .fab { background:#2a2a2a; border-color:#3a3a3a; color:#b5b5b5; }
   [data-theme="dark"] .entry input,
   [data-theme="dark"] .dialog input { background:#242424; border-color:#3a3a3a; color:#e8e8e8; }
+  /* 标题右边那个查账框不是 .entry 里的，之前漏了：暗色下还是黑字黑底 */
+  [data-theme="dark"] .topbar .search .field input {
+    background:#242424; border-color:#3a3a3a; color:#e8e8e8;
+  }
+  [data-theme="dark"] .topbar .search .field input::placeholder { color:#8b9199; }
+  [data-theme="dark"] .ledger-day { color:#9aa0a6; }
   [data-theme="dark"] .ops .kind { background:#3a3a3a; color:#b0b0b0; }
   [data-theme="dark"] .mask { background:rgba(0,0,0,.55); }
 
@@ -258,6 +304,7 @@
   [data-theme="dark"] .entry .mic { background:#3a3a3a; color:#d6d6d6; }
   [data-theme="dark"] .entry .mic.rec { background:var(--red); color:#fff; }
   [data-theme="dark"] .pager button { background:#3a3a3a; border-color:#464646; color:#d6d6d6; }
+  [data-theme="dark"] .pager .jump input { background:#242424; border-color:#3a3a3a; color:#e8e8e8; }
 
   /* 顶部提示条：从上方滑下来 */
   .toast { position:fixed; left:50%; top:0; z-index:200;
@@ -267,11 +314,6 @@
            box-shadow:0 6px 18px rgba(16,24,40,.18);
            transition:transform .26s ease; }
   .toast.show { transform:translate(-50%, 0); }
-  .time-toggle { cursor:pointer; border-bottom:1px dashed #cbd5e1; }
-  .time-toggle:hover { color:var(--accent); border-bottom-color:var(--accent); }
-  .t-long { display:none; }
-  .time-toggle.expanded .t-short { display:none; }
-  .time-toggle.expanded .t-long { display:inline; }
   .amt-mini { color:#9aa4b2; font-size:11px; margin-left:6px; font-weight:400; }
 
   .mask { position:fixed; inset:0; background:rgba(15,23,42,.35); display:flex;
@@ -314,6 +356,7 @@
 
     <div class="qresult" id="qresult" hidden>
       <div class="qanswer" id="qanswer"></div>
+      <div class="qnote" id="qnote" hidden></div>
       <div class="dsl" id="qdsl"></div>
     </div>
   </div>
@@ -362,7 +405,7 @@
   </div>
   <div class="hint" id="hint"></div>
 
-  <section class="panel">
+  <section class="panel" id="statsPanel">
     <h3 id="catsTitle">这个月花在哪</h3>
     <div class="spend-note" id="spendNote" hidden></div>
     <div id="cats"></div>
@@ -375,6 +418,12 @@
     <button type="button" id="prevPage">上一页</button>
     <span id="pageInfo"></span>
     <button type="button" id="nextPage">下一页</button>
+    <span class="jump">
+      跳转至
+      <input id="pageJump" type="number" min="1" step="1" inputmode="numeric"
+             aria-label="跳转到第几页">
+      页
+    </span>
   </div>
 </main>
 
@@ -539,11 +588,19 @@ function logLines(t) {
   if (!logs.length) return [];
   const lines = logs.map((l) => ({
     at: l.changed_at,
+    when: l.new_occurred_at,
     text: l.new_text,
     amount: l.new_amount_cents,
+    kind: l.new_kind,
   }));
   const first = logs[logs.length - 1];   // logs 倒序，最后一条是最早那次改动
-  lines.push({ at: t.created_at, text: first.old_text, amount: first.old_amount_cents });
+  lines.push({
+    at: t.created_at,
+    when: first.old_occurred_at,
+    text: first.old_text,
+    amount: first.old_amount_cents,
+    kind: first.old_kind,
+  });
   return lines;
 }
 
@@ -665,29 +722,48 @@ let page = 0;
 const PAGE_SIZE = 10;
 let totalCount = 0;
 
+/* 账本上看的是「记账日期」；录入/修改时间放到虚线下面展开看 */
+function ledgerDay(occurred) {
+  const s = String(occurred || "");
+  return s ? s.slice(0, 10) : "—";                       // 统一到天：2026-09-24
+}
+function stampFull(s) {
+  const v = String(s || "");
+  return v ? v.slice(0, 19) : "—";                       // 操作时间到秒：2026-11-24 13:04:17
+}
+function dayWithTime(s) {
+  const v = String(s || "");
+  if (!v) return "—";
+  return v.length > 10 ? v.slice(0, 16) : v.slice(0, 10);  // 记账时间到分就够
+}
+
 function renderItem(t) {
   const logs = t.logs || [];
-  const stamp = t.updated_at || t.created_at;
-  // 记账日期和「录入日期」不是同一天时（补记 / 改过时间），把记账日期也显示出来
-  const occurred = String(t.occurred_at || "");
-  const diffDay = occurred.slice(0, 10) !== String(t.created_at || "").slice(0, 10);
-  const occPrefix = diffDay ? `记账 ${esc(occurred.slice(0, 16))} · ` : "";
-  // 收起时到分，展开时到秒——两段都渲染好，靠 CSS 切换
-  const shortTime = occPrefix + "记录于 " + esc(fullTime(stamp));
-  const longTime = occPrefix + "记录于 " + esc(fullTimeSec(stamp));
-  const timeHtml = `<span class="${logs.length ? "time-toggle" : "time-plain"}"` +
-    (logs.length ? ` data-logs="${t.id}" title="点开看修改记录"` : "") +
-    `><span class="t-short">${shortTime}</span>` +
-    (logs.length ? `<span class="t-long">${longTime}</span>` : "") +
-    `<i class="caret">${logs.length ? "▾" : ""}</i></span>`;
-  const logBox = logs.length ? `
+  const rows = logLines(t);                                 // 版本列表，新的在上
+  const logBox = `
     <div class="logs" id="logs-${t.id}" hidden>
-      ${logLines(t).map((l, i) => `<div>` +
-        (i === 0 ? '<span class="mark">·</span>' : "") +
-        `${fullTimeSec(l.at)}　${esc(l.text)}` +
-        `<span class="amt-mini">¥${l.amount == null ? "--" : yuan(l.amount)}</span>` +
-        `</div>`).join("")}
-    </div>` : "";
+      <div class="logs-head">
+        录入于 ${esc(fullTimeSec(t.created_at))}
+        ${logs.length ? `· 改过 ${logs.length} 次` : "· 没改过"}
+      </div>
+      ${logs.length ? `
+      <table class="logs-table">
+        <thead><tr><th>操作时间</th><th>记账时间</th><th>内容</th><th>金额</th></tr></thead>
+        <tbody>
+        ${rows.map((r, i) => {
+          const prev = rows[i + 1] || {};                     // 更早的一版，用来标出改了什么
+          const mk = i === 0 ? " mk" : "";                    // 「·」标在最新一版
+          const chg = (cur, old) => old !== undefined && cur !== old ? " chg" : "";
+          return `<tr>
+            <td class="t${mk}">${esc(stampFull(r.at))}</td>
+            <td class="t${chg(r.when, prev.when)}">${esc(dayWithTime(r.when))}</td>
+            <td class="c${chg(r.text, prev.text)}">${esc(r.text || "—")}</td>
+            <td class="m${chg(r.amount, prev.amount)}">${r.amount == null ? "--" : (r.kind === "income" ? "+" : "−") + "¥" + yuan(r.amount)}</td>
+          </tr>`;
+        }).join("")}
+        </tbody>
+      </table>` : ""}
+    </div>`;
   return `
   <li>
     <div class="row">
@@ -696,7 +772,9 @@ function renderItem(t) {
     </div>
     <div class="row2">
       <span class="txt">${esc(t.text)}</span>
-      <span class="meta">${timeHtml}
+      <span class="meta">
+        <button type="button" class="ledger-day" data-logs="${t.id}" aria-expanded="false"
+                title="看录入时间和修改史">记账于 ${esc(ledgerDay(t.occurred_at))}<i class="caret">▾</i></button>
         <button class="edit" data-id="${t.id}" data-text="${esc(t.text)}"
                 data-amount="${t.amount_cents == null ? "" : t.amount_cents}"
                 data-when="${esc(t.occurred_at || "")}">编辑</button>
@@ -712,7 +790,46 @@ function renderPager(pages) {
   $("pageInfo").textContent = `第 ${page + 1} / ${pages} 页 · 共 ${totalCount} 条`;
   $("prevPage").disabled = page === 0;
   $("nextPage").disabled = page >= pages - 1;
+  $("pageJump").max = String(pages);
 }
+
+/* 页码夹紧：小于 1 当第 1 页，大于总页数当最后一页，不是数字就不动。
+   单独拎出来是为了能脱离 DOM 做单测。 */
+function clampPage(n, pages) {
+  if (!Number.isFinite(n)) return null;
+  return Math.min(pages, Math.max(1, Math.floor(n)));
+}
+
+/* 跳到指定页：回车或离开输入框时生效 */
+function jumpToPage() {
+  const el = $("pageJump");
+  const raw = el.value.trim();
+  if (!raw) return;
+  const pages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const target = clampPage(Number(raw), pages);
+  el.value = "";
+  if (target === null) return;
+  if (target - 1 !== page) loadList(target - 1);      // 换页（loadList 会处理滚动）
+}
+
+$("pageJump").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); jumpToPage(); }
+  if (e.key === "Escape") { e.target.value = ""; e.target.blur(); }
+});
+$("pageJump").addEventListener("blur", jumpToPage);
+
+/* 翻页后把视口拉回「这个月花在哪」那一块的顶端。
+   为什么不是滚到列表头：最后一页条数少、整页变短，滚到列表头的目标位置
+   已经超过文档最大滚动量，浏览器一夹紧就停在半路——看起来像"没滚够"。
+   往上找一个固定的锚点（统计面板），位置稳定，页短页长都落在这儿。 */
+function scrollToList() {
+  const el = $("statsPanel") || $("list");
+  if (!el) return;
+  const top = el.getBoundingClientRect().top + window.scrollY - 12;
+  window.scrollTo({ top, behavior: "smooth" });
+}
+
+let shownPage = null;          // 上一次真正渲染出来的页码，用来判断"是否换了页"
 
 async function loadList(p) {
   p = Math.max(0, p);
@@ -721,12 +838,15 @@ async function loadList(p) {
   totalCount = d.total;
   const pages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   if (p > pages - 1) return loadList(pages - 1);   // 删光了最后一页，往回退一页
+  const changed = shownPage !== null && shownPage !== p;
   page = p;
+  shownPage = p;
 
   $("list").innerHTML = d.items.length
     ? d.items.map(renderItem).join("")
     : '<div class="empty">还没有记录，上面说一句试试</div>';
   renderPager(pages);
+  if (changed) scrollToList();    // 首次加载不滚，翻页/回退才滚
 }
 
 /* ---------- 卡片看的是哪个月 ----------
@@ -959,6 +1079,14 @@ function flashSearch() {
   el.addEventListener("animationend", () => el.classList.remove("flash"), { once: true });
 }
 
+/* 答案出现在页面顶部，人却可能停在底部的记账框那儿 —— 滚回去，别让人找 */
+function scrollToSearch() {
+  const el = document.querySelector(".topwrap") || $("qtext");
+  if (!el) return;
+  const top = el.getBoundingClientRect().top + window.scrollY - 10;
+  window.scrollTo({ top, behavior: "smooth" });
+}
+
 // 搜索框文字一改，旧的查询结果就不作数了，先收起来
 $("qtext").addEventListener("input", () => {
   if (!$("qresult").hidden) $("qresult").hidden = true;
@@ -971,8 +1099,10 @@ const GROUP_LABEL = { category: "类别", month: "月份", none: "" };
 async function askQuery(q) {
   $("qtext").value = q;
   $("qresult").hidden = false;
+  scrollToSearch();                 // 答案在顶部就滚回顶部，人可能还在底部的记账框
   $("qanswer").style.color = "";
   $("qanswer").textContent = "查着呢…";
+  $("qnote").hidden = true;
   $("qdsl").textContent = "";
   try {
     const r = await fetch("/api/query", {
@@ -995,6 +1125,13 @@ async function askQuery(q) {
     }
     $("qanswer").style.color = "";
     $("qanswer").innerHTML = "<b>" + esc(d.answer) + "</b>";
+    // 补充提示：比如钟点查询时，这天还有几笔没记时间
+    if (d.note) {
+      $("qnote").textContent = d.note;
+      $("qnote").hidden = false;
+    } else {
+      $("qnote").hidden = true;
+    }
     const s = d.dsl;
     $("qdsl").textContent = "解析为：" + s.label + "（" + s.start + " ~ " + s.end + "）"
       + " · " + (METRIC_LABEL[s.metric] || s.metric)
@@ -1042,11 +1179,11 @@ let editingId = null;
 
 $("list").addEventListener("click", (e) => {
   const logBtn = e.target.closest("[data-logs]");
-  if (logBtn) {                             // 展开 / 收起编辑记录（只读）
+  if (logBtn) {                             // 展开 / 收起「录入时间 + 修改史」（只读）
     const box = $("logs-" + logBtn.dataset.logs);
     if (box) {
       box.hidden = !box.hidden;
-      logBtn.classList.toggle("expanded", !box.hidden);   // 展开时把时间换成带秒的
+      logBtn.setAttribute("aria-expanded", String(!box.hidden));
     }
     return;
   }
