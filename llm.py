@@ -28,12 +28,15 @@ SYSTEM_TEMPLATE = """你是记账助手。把用户的一句话解析成 JSON，
 字段要求：
 - amount: 数字（单位：元），没有提到金额就填 null
 - date: 记账日期 YYYY-MM-DD，没有明确日期就填 null
+- time: 记账时刻 HH:MM（24 小时制），没有明确时刻就填 null。
+  口语也要换算：「十点」-> "10:00"、「晚上十点半」-> "22:30"、"下午三点一刻"-> "15:15"
 - category: 必须是以下之一：{cats}；拿不准就填 null
 - kind: "expense" 或 "income"。花钱、买东西、消费填 expense；
   收到钱、红包、工资、退款、报销、卖东西收钱填 income；拿不准填 null
 - title: 一句话概括这件事，不超过 20 字
 
-今天是 {today}。像「昨天」「上周三」这种相对日期，请换算成具体日期。"""
+今天是 {today}。像「昨天」「上周三」这种相对日期，请换算成具体日期。
+时间不确定就别填，宁可 null 也不要编。只输出 JSON。"""
 
 
 def _categories() -> str:
@@ -85,8 +88,8 @@ def parse_text(text: str, api_key: str | None = None) -> dict | None:
 
 def _validate(raw: dict) -> dict:
     """模型给的东西一律当不可信输入处理。"""
-    result = {"amount_cents": None, "occurred_at": None, "category": None,
-              "kind": None, "title": None}
+    result = {"amount_cents": None, "date": None, "time": None,
+              "category": None, "kind": None, "title": None}
 
     amount = raw.get("amount")
     if isinstance(amount, (int, float)):
@@ -97,9 +100,18 @@ def _validate(raw: dict) -> dict:
     day = raw.get("date")
     if isinstance(day, str):
         try:
-            result["occurred_at"] = date.fromisoformat(day[:10]).isoformat()
+            result["date"] = date.fromisoformat(day[:10]).isoformat()
         except ValueError:
             pass
+
+    # 时刻只认 HH:MM，范围和格式都查；模型编不出 25:00 就过不了这一关
+    clock = raw.get("time")
+    if isinstance(clock, str):
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", clock.strip())
+        if m:
+            hour, minute = int(m.group(1)), int(m.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                result["time"] = f"{hour:02d}:{minute:02d}"
 
     cat = raw.get("category")
     if isinstance(cat, str) and cat in CATEGORY_WORDS:

@@ -282,21 +282,57 @@ def list_transactions(limit: int = 10, offset: int = 0) -> dict:
     }
 
 
+def _model_date(value) -> str | None:
+    """模型给的日期：格式不对、或者根本不是个真实日期，就当没给。
+
+    不依赖 llm._validate()——那一层是「第一道」，这里再挡一次，
+    免得哪天有人绕过、或者 prompt 改坏，脏日期直接落库。
+    """
+    try:
+        return date.fromisoformat(str(value)[:10]).isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _model_time(value) -> str | None:
+    """模型给的时刻：只认 HH:MM，且 0~23 / 0~59。"""
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or "").strip())
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
 def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
     """解析一段文字（整句或一个分句），返回统一结构。
 
     budget 是个只有一项的列表：一次请求里最多问几次模型，
     防止「一句话拆出五段」就调五次接口。
+
+    日期/时间的合成规则：
+    - 调用方显式给了 occurred_at → 用它，不再问模型
+    - 规则读到了日期（date_hit）→ 用规则的
+    - 规则只是兜底到今天（date_hit=False）→ 允许模型给一个日期
+    时间同理（time_hit）。**模型只能补规则没读到的部分，不能推翻读到的。**
     """
     p = parser.parse(text)
     amount = fallback.amount_cents if fallback.amount_cents is not None else p["amount_cents"]
     category = fallback.category or p["category"]
-    # 新增时也要校验日期：接口是公开的，不能只在编辑那条路径上验
-    occurred = check_occurred_at(fallback.occurred_at) or p["occurred_at"]
     kind = fallback.kind if fallback.kind in storage.KINDS else p["kind"]
     used_llm = False
 
-    if (amount is None or category is None) and budget[0] > 0 and current_key():
+    # 拆成「日期」「时刻」两段，方便只补其中一半
+    rule_when = check_occurred_at(fallback.occurred_at) or p["occurred_at"]
+    date_part = rule_when[:10]
+    time_part = rule_when[11:16] if len(rule_when) > 10 else ""
+    date_locked = bool(fallback.occurred_at) or p["date_hit"]
+    time_locked = bool(fallback.occurred_at) or p["time_hit"]
+
+    need_model = (amount is None or category is None
+                  or not date_locked or not time_locked)
+    if need_model and budget[0] > 0 and current_key():
         guess = llm.parse_text(text, current_key())
         budget[0] -= 1
         if guess:
@@ -306,7 +342,12 @@ def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
             # 模型也可以纠正方向（「收了个红包」规则没词的时候），但不许改金额
             if fallback.kind not in storage.KINDS and guess.get("kind") in storage.KINDS:
                 kind = guess["kind"]
+            if not date_locked and (got := _model_date(guess.get("date"))):
+                date_part = got
+            if not time_locked and (got := _model_time(guess.get("time"))):
+                time_part = got
 
+    occurred = date_part + (" " + time_part if time_part else "")
     return {"text": text, "amount": amount, "occurred": occurred,
             "category": category, "kind": kind, "vague": p["vague_date"],
             "hits": p["hits"], "llm": used_llm}

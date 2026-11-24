@@ -38,6 +38,16 @@ INCOME_WORDS = ["工资", "红包", "收入", "进账", "退款", "报销", "奖
 # 「3个人吃饭一共120」里的 3 不是金额：数字后面跟这些量词就跳过
 COUNTERS = "个人位次张杯份碗瓶"
 
+# 时间说法：22点 / 22:30 / 晚上10点 / 22点半 / 下午3:15
+# 中文数字的小时（「十点」「三点」）先不认，交给模型——规则里认它容易和金额打架
+TIME_RE = re.compile(
+    r"(?P<period>凌晨|早上|上午|中午|下午|傍晚|晚上|夜里|半夜)?\s*"
+    r"(?P<hour>\d{1,2})\s*[点:：]\s*"
+    r"(?P<minute>\d{1,2}|半)?"
+)
+# 「下午3点」「晚上10点」这类要加 12 小时
+PM_PERIODS = ("下午", "傍晚", "晚上", "夜里", "半夜")
+
 # 量级词：1亿 = 100000000
 MAGNITUDE = {"百": 100, "千": 1_000, "万": 10_000, "亿": 100_000_000}
 
@@ -70,6 +80,14 @@ def cn_to_int(s: str) -> int:
     return total + section + num
 
 
+def strip_time(text: str) -> str:
+    """把「22点」「22:30」整段挖掉再去找金额。
+
+    不挖的话「昨天22点打车32」会先命中 22，记成 22 块——这是真实踩过的坑。
+    """
+    return TIME_RE.sub(" ", text)
+
+
 def find_amount(text: str) -> tuple[int | None, str]:
     """找金额，返回 (分, 命中的原文)。
 
@@ -79,6 +97,9 @@ def find_amount(text: str) -> tuple[int | None, str]:
         三十二块     中文数字 + 块/元
         32          普通数字（跳过「3个人」这类量词）
     """
+    # 时间里的数字不是金额，先挖掉
+    text = strip_time(text)
+
     # ① 「32块5」：块后面的单个数字是角
     m = re.search(r"(\d+)\s*块\s*(\d)(?!\d)", text)
     if m:
@@ -108,12 +129,48 @@ def find_amount(text: str) -> tuple[int | None, str]:
     return None, ""
 
 
+def find_time(text: str) -> tuple[int, int] | None:
+    """找「几点几分」，返回 (时, 分)。认不出或超范围就返回 None。
+
+    「下午3点」要加 12 小时；「25点」「10点70分」这种明显错的，当没写时间。
+    """
+    m = TIME_RE.search(text)
+    if not m:
+        return None
+    hour = int(m.group("hour"))
+    minute = 0
+    raw_minute = m.group("minute")
+    if raw_minute == "半":
+        minute = 30
+    elif raw_minute:
+        minute = int(raw_minute)
+
+    period = m.group("period") or ""
+    if period in PM_PERIODS and hour < 12:
+        hour += 12
+    elif period == "中午" and hour < 11:
+        hour += 12
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
 def find_date(text: str, today: date) -> date:
     # 按词长倒序匹配：「大前天」里有「前天」，不先匹配长的就会少算一天
     for word, offset in sorted(RELATIVE_DAYS.items(), key=lambda kv: -len(kv[0])):
         if word in text:
             return today - timedelta(days=offset)
     return today
+
+
+def has_date_word(text: str) -> bool:
+    """句子里到底有没有出现「今天/昨天/大前天」这类词。
+
+    没有的话默认到今天是**兜底**，不是读到的——上层可以拿这个去问模型，
+    免得把「上周三」也默默当成今天。
+    """
+    return any(word in text for word in RELATIVE_DAYS)
 
 
 def find_vague_date(text: str) -> str:
@@ -145,16 +202,24 @@ def find_kind(text: str) -> tuple[str, str]:
 
 
 def parse(text: str, today: date | None = None) -> dict:
-    """一句话 -> 一条草稿。"""
+    """一句话 -> 一条草稿。
+
+    认出了时间就带上时分（`2026-11-23 22:00`），没认出就只到天。
+    """
     today = today or date.today()
     amount, amount_hit = find_amount(text)
     category, category_hit = find_category(text)
     kind, kind_hit = find_kind(text)
+    occurred = find_date(text, today)
+    hm = find_time(text)
     return {
         "amount_cents": amount,
-        "occurred_at": find_date(text, today).isoformat(),
+        "occurred_at": (f"{occurred.isoformat()} {hm[0]:02d}:{hm[1]:02d}"
+                        if hm else occurred.isoformat()),
         "category": category,
         "kind": kind,
+        "date_hit": has_date_word(text),      # 日期是读到的还是兜底到今天
+        "time_hit": hm is not None,           # 时间读到了没有
         "vague_date": find_vague_date(text),
         "hits": {"amount": amount_hit, "category": category_hit, "kind": kind_hit},
     }

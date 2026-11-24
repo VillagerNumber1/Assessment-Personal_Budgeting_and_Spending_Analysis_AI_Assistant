@@ -316,8 +316,12 @@ def _edit_logs(con: sqlite3.Connection, tx_id: int) -> list[dict]:
             "changed_at": r["created_at"],
             "old_text": before.get("text"),
             "old_amount_cents": before.get("amount_cents"),
+            "old_occurred_at": before.get("occurred_at"),
+            "old_kind": before.get("kind"),
             "new_text": after.get("text"),
             "new_amount_cents": after.get("amount_cents"),
+            "new_occurred_at": after.get("occurred_at"),
+            "new_kind": after.get("kind"),
         })
     return logs
 
@@ -362,6 +366,22 @@ def delete_query(query_id: int) -> bool:
         cur = con.execute("delete from queries where id = ?", (query_id,))
         con.commit()
         return cur.rowcount > 0
+    finally:
+        con.close()
+
+
+def count_dateless(day: str) -> int:
+    """某一天里「只记了日期、没记时间」的账有多少笔。
+
+    钟点查询只能用得上带时分的账，这种账没法判断属不属于那个钟点，
+    所以不进结果，但要告诉用户一声。
+    """
+    con = _connect()
+    try:
+        return int(con.execute(
+            "select count(*) from transactions"
+            " where status = 'confirmed' and deleted_at is null and occurred_at = ?",
+            (day,)).fetchone()[0])
     finally:
         con.close()
 
