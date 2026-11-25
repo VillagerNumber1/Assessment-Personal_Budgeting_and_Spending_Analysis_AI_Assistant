@@ -192,7 +192,8 @@ Legacy_OutOfDate/         已冻结的桌面原型（见文末）
 
 ## 接口一览
 
-共 20 个接口（下表把 `/api/settings` 的读和写合成了一行），都挂在 FastAPI 上，`/docs` 里能直接点开试。
+共 23 个接口（下表 21 行：`/api/settings` 和 `/api/queries` 的读、写各合成了一行），
+都挂在 FastAPI 上，`/docs` 里能直接点开试。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
