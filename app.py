@@ -227,6 +227,9 @@ def _settings_payload() -> dict:
     data.pop("api_key", None)
     data["has_key"] = bool(key)
     data["key_hint"] = runtime.mask_key(key)
+    # 界面上**配过**的 key（不含 .env）。重置按钮只在真的配过时才显示，
+    # 否则「重置」按下去什么也没变（还回落到 .env 那份），会让人以为没生效
+    data["has_ui_key"] = bool(runtime.api_key())
     data["has_background"] = _background_file() is not None
     # 默认预算的真相在 budget_defaults 表里（分段存），settings.json 里那个字段只是历史残留，
     # 这里用「当前月生效的那个数」盖掉它，前端拿到的永远是现在真正在用的值
@@ -586,11 +589,21 @@ def create_transaction(tx: NewTransaction) -> dict:
     item = _resolve(tx.text, tx, budget)
     # 先报日期听不懂：这句话可能两样都缺（「最近花了一千多」），日期更好改
     check_vague_date(item, tx.occurred_at)
-    # 连金额都没解析出来就别存：null 金额会进统计的 count(*)，留着纯属脏数据
+    # 认不出金额不再报错：回一份草稿，前端弹编辑窗让人补个数。
+    # 能读出来的（文字、日期、类别、方向）都先填进去，用户只需要填金额。
+    # 为什么不直接 400：那句话是他刚打的，丢掉要重打一遍——留着让他改更省事。
     if item["amount"] is None:
-        raise HTTPException(
-            status_code=400,
-            detail="没听出金额，说具体一点，比如「午饭 32」")
+        return {
+            "ok": True,
+            "need_amount": True,
+            "draft": {
+                "text": item["text"],
+                "occurred": item["occurred"],
+                "category": item["category"],
+                "kind": item["kind"],
+                "llm": item["llm"],
+            },
+        }
     check_amount(item["amount"], tx.confirm_large)
     try:
         new_id = storage.add(item["text"], item["amount"], item["occurred"],
