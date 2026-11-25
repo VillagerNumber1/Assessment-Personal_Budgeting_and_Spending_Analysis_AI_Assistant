@@ -509,7 +509,7 @@
       <div class="ct-foot">
         <span>本月收入 <b id="incomeNum">¥0.00</b></span>
         <span class="sep">·</span>
-        <span>本月结余 <b id="balanceNum">+¥0.00</b></span>
+        <span>本月结余 <b id="balanceNum">¥0.00</b></span>
       </div>
       <button type="button" class="ct-budget down" data-budget title="点一下设置本月预算">
         <span class="budget-left" id="budgetLeft">点一下设置</span>
@@ -677,7 +677,7 @@
           <div class="row-setting">
             <div>
               <div class="set-title">卡片背景</div>
-              <div class="muted">给最上面那张卡换张图，png / jpg / webp，8 MB 以内</div>
+              <div class="muted">换上你喜欢的背景图吧~ 支持 png / jpg / webp / gif，8 MB 以内</div>
             </div>
             <div class="bg-actions">
               <input id="bgFile" type="file" accept="image/*" hidden>
@@ -1185,7 +1185,7 @@ function renderCard(d) {
   $("incomeNum").textContent = "¥" + d.income_yuan;
 
   const bal = d.balance_cents || 0;
-  $("balanceNum").textContent = (bal < 0 ? "−¥" : "+¥") + yuan(Math.abs(bal));
+  $("balanceNum").textContent = (bal < 0 ? "−¥" : bal > 0 ? "+¥" : "¥") + yuan(Math.abs(bal));
 
   paintBudget(d);
 }
@@ -1935,26 +1935,35 @@ async function loadSettings() {
 }
 
 /* ---------- 卡片背景 ----------
-   图由后端存在 data/backgrounds，前端只认一个 URL。
-   上面盖一层半透明蓝，保证白字压在任何图上都看得清。 */
-function applyCardBg(has) {
+   图由后端存在 data/backgrounds，前端只认一个 URL；图上压一层暗色，白字才读得清。
+   这里要记住"已经贴上去的那张"：每次开设置都会重跑 loadSettings，
+   如果每次都换一个 ?v= 时间戳，浏览器就会重新下载一次 → 背景闪一下。 */
+let cardBgUrl = "";
+
+function applyCardBg(has, force = false) {
   const card = document.querySelector(".total-card");
   if (!card) return;
 
-  if (has) {
-    // 不用蓝色蒙版（那样等于换了张蓝纸）：把图压暗一档就够了，
-    // 上淡下浓，正好压住底下一行小字，数据始终是白色的主角。
-    card.style.backgroundImage =
-      `linear-gradient(rgba(15,23,42,.40), rgba(15,23,42,.62)), url("/api/background?v=${Date.now()}")`;
-    card.style.backgroundSize = "cover";
-    card.style.backgroundPosition = "center";
-    card.classList.add("has-bg");
-  } else {
+  if (!has) {
+    cardBgUrl = "";
     card.style.backgroundImage = "";
     card.style.backgroundSize = "";
     card.style.backgroundPosition = "";
     card.classList.remove("has-bg");
+    return;
   }
+
+  // 同一张已经贴着了就别再动 DOM，否则每开一次设置都会闪一下
+  if (cardBgUrl && !force) return;
+
+  // 不用蓝色蒙版（那样等于换了张蓝纸）：把图压暗一档就够了，
+  // 上淡下浓，正好压住底下一行小字，数据始终是白色的主角。
+  cardBgUrl = `/api/background?v=${Date.now()}`;
+  card.style.backgroundImage =
+    `linear-gradient(rgba(15,23,42,.40), rgba(15,23,42,.62)), url("${cardBgUrl}")`;
+  card.style.backgroundSize = "cover";
+  card.style.backgroundPosition = "center";
+  card.classList.add("has-bg");
 }
 
 async function uploadCardBg(file) {
@@ -1965,7 +1974,7 @@ async function uploadCardBg(file) {
     const r = await fetch("/api/background", { method: "POST", body: form });
     const d = await r.json();
     if (!r.ok) { toast("背景没换上：" + (d.detail || "未知错误"), false); return; }
-    applyCardBg(true);
+    applyCardBg(true, true);            // 换新图要强制重贴，不然还留着上一张
     toast("卡片背景换好了", true, file.name);
   } catch (err) {
     toast("背景没换上：" + err.message, false);
