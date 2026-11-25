@@ -347,7 +347,7 @@
 
   /* 黑夜模式：中性灰，只覆写颜色不动布局 */
   [data-theme="dark"] { --bg:#1e1e1e; --card:#2a2a2a; --ink:#e8e8e8; --muted:#9aa0a6; }
-  [data-theme="dark"] .dialog { background:#33343a;
+  [data-theme="dark"] .dialog { background:#3d3e45;
                                 box-shadow:0 24px 64px rgba(0,0,0,.60), 0 2px 8px rgba(0,0,0,.40); }
   [data-theme="dark"] .ops .undo,
   [data-theme="dark"] .keyrow button { background:#3a3a3a; border-color:#464646; color:#d6d6d6; }
@@ -445,7 +445,7 @@
   .mask { position:fixed; inset:0; background:rgba(23,23,23,.36); display:flex;
           align-items:center; justify-content:center; padding:16px; }
   .mask[hidden] { display:none; }
-  .dialog { background:#fdfdff; border-radius:16px; padding:22px 24px; width:100%; max-width:400px;
+  .dialog { background:#f8f9fb; border-radius:16px; padding:22px 24px; width:100%; max-width:400px;
             /* 阴影要够大够软：弹窗底下是半透明遮罩，阴影是让人一眼看出「浮在最上层」的东西 */
             box-shadow:0 24px 64px rgba(15,23,42,.30), 0 2px 8px rgba(15,23,42,.12); }
   .dialog h2 { margin:0 0 12px; font-size:16px; }

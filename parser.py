@@ -105,10 +105,13 @@ def find_amount(text: str) -> tuple[int | None, str]:
     if m:
         return int(m.group(1)) * 100 + int(m.group(2)) * 10, m.group(0)
 
-    # ② 阿拉伯数字 + 量级：1亿 / 1.5万 / 3千
-    m = re.search(r"(\d+(?:\.\d{1,2})?)\s*(亿|万|千|百)", text)
+    # ② 阿拉伯数字 + 量级：1亿 / 1.5万 / 3千 / 4万5（那个 5 是下一级，= 45000）
+    m = re.search(r"(\d+(?:\.\d{1,2})?)\s*(亿|万|千|百)(\d)?(?![\d])", text)
     if m:
-        cents = round(float(m.group(1)) * MAGNITUDE[m.group(2)] * 100)
+        unit = MAGNITUDE[m.group(2)]
+        cents = round(float(m.group(1)) * unit * 100)
+        if m.group(3):                       # 「4万5」「3千5」：末位数字是下一级
+            cents += round(float(m.group(3)) * unit / 10 * 100)
         return cents, m.group(0)
 
     # ③ 中文数字 + 块/元：三十二块
@@ -116,17 +119,32 @@ def find_amount(text: str) -> tuple[int | None, str]:
     if m:
         return cn_to_int(m.group(1)) * 100, m.group(0)
 
-    # ④ 普通阿拉伯数字，跳过「3个人」这种量词
+    # ④ 普通阿拉伯数字：候选可能不止一个，挑「最像钱」的那个。
+    #    「iphone15手机5999」里 15 是型号、5999 才是钱；
+    #    「买了5090显卡」里 5090 是型号，整句其实没有金额——
+    #    宁可报「没听出金额」，也别把型号当钱记下去（那也是替用户编数据）。
+    best_score, best_match = 0, None
     for m in re.finditer(r"(\d+(?:\.\d{1,2})?)", text):
         tail = text[m.end():m.end() + 1]
         if tail and tail in COUNTERS:
-            continue
-        cents = round(float(m.group(1)) * 100)
-        # 前面紧挨着负号的记成负数（退款/冲正），收不收由上层决定
-        if m.start() > 0 and text[m.start() - 1] in "-−":
-            cents = -cents
-        return cents, m.group(0)
-    return None, ""
+            continue                      # 「3个人」「2张票」这种量词，肯定不是钱
+        score = 0
+        if tail in ("元", "块", "圆", "¥", "￥"):
+            score += 100                  # 带货币单位，最可信
+        if not tail or tail in "，,。.！!？?、；; \t":
+            score += 40                   # 落在句尾
+        if tail and "\u4e00" <= tail <= "\u9fff" and tail not in ("元", "块", "圆"):
+            score -= 50                   # 后面紧跟名词：「5090显卡」的 5090
+        if score > best_score:            # 同分取前面的
+            best_score, best_match = score, m
+
+    if best_match is None:
+        return None, ""
+    cents = round(float(best_match.group(1)) * 100)
+    # 前面紧挨着负号的记成负数（退款/冲正），收不收由上层决定
+    if best_match.start() > 0 and text[best_match.start() - 1] in "-−":
+        cents = -cents
+    return cents, best_match.group(0)
 
 
 def find_time(text: str) -> tuple[int, int] | None:
