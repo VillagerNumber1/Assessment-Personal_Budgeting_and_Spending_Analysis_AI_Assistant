@@ -6,6 +6,7 @@
 <title>记账小助手</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --ink:#1f2933; --muted:#8a94a6; --accent:#2f7cf6; --red:#e5484d;
+
         --income:#ffd54a; }   /* 列表里的收入用这个黄；卡片上的数字一律白色 */
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
@@ -173,22 +174,22 @@
   .edit { border:0; background:none; color:var(--accent); font-size:12px; cursor:pointer; padding:0 4px; }
   .empty { color:var(--muted); text-align:center; padding:32px 0; }
   /* 本月 vs 上月的结论：这是「提示」的数据版，看板娘关掉也照样显示 */
-  .spend-note { font-size:12px; color:var(--muted); margin:-4px 0 10px; padding-left:2px; }
+  .spend-note { font-size:12px; color:var(--muted); margin:-4px 0 10px; padding-left:0; }
   .spend-note.up { color:#d97706; }
   .spend-note.down { color:#16a34a; }
 
   .panel { background:var(--card); border-radius:16px; padding:16px 18px; margin-top:14px;
            box-shadow:0 1px 2px rgba(16,24,40,.05); }
-  .panel h3 { margin:0 0 10px; font-size:13px; color:var(--muted); font-weight:600; letter-spacing:.5px; }
+  .panel h3 { margin:0 0 10px; font-size:13px; color:#4b5563; font-weight:600; letter-spacing:.5px; }
   .bar-row { display:flex; align-items:center; gap:10px; margin:7px 0; font-size:13px; }
-  .bar-name { width:52px; color:#475569; flex:none; }
+  .bar-name { width:52px; color:#374151; flex:none; }
   .bar-track { flex:1; height:8px; background:#eef2f7; border-radius:999px; overflow:hidden; }
   .bar-fill { display:block; height:100%; background:var(--accent); border-radius:999px; }
-  .bar-val { width:86px; text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; flex:none; }
+  .bar-val { width:86px; text-align:right; color:#4b5563; font-variant-numeric:tabular-nums; flex:none; }
   .trend { display:flex; align-items:flex-end; gap:14px; height:84px; justify-content:center; }
   .trend .col { width:44px; flex:none; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:4px; }
   .trend .bar { width:100%; background:#c7dbff; border-radius:6px 6px 0 0; }
-  .trend .lbl { font-size:11px; color:var(--muted); }
+  .trend .lbl { font-size:11px; color:#64748b; }
   /* 展开区：虚线就画在「记账于 2026-11-23 ▾」下面，点它就是展开 */
   .ledger-day { grid-column:1; justify-self:end; border:0; background:none; padding:0 0 1px;
                 font:inherit; color:var(--muted); cursor:pointer;
@@ -256,7 +257,7 @@
   .keyhint.ok { color:#16a34a; }
 
   /* 设置窗口：左侧菜单 + 右侧内容 */
-  .dialog.wide { max-width: 560px; }
+  .dialog.wide { max-width: 640px; }
   .settings-body { display:flex; gap:14px; min-height:250px; }
   .side { width:120px; flex:none; display:flex; flex-direction:column; gap:2px; }
   .nav { display:flex; align-items:center; gap:8px; width:100%; padding:9px 10px;
@@ -273,9 +274,13 @@
   .ops .kind.delete { background:#fdecec; color:#e5484d; }
   .ops .kind.edit { background:#eef4ff; color:#2f7cf6; }
   .ops .kind.query { background:#fdf2f8; color:#db2777; }   /* 查账历史用粉色，跟操作分开 */
+  .ops .kind.budget { background:#fff7e6; color:#b45309; }   /* 预算改动用琥珀色 */
   /* 历史记录顶上那句说明：灰色小字，别抢列表的注意力 */
   .ops-note { margin:-4px 0 8px; font-size:12px; line-height:1.5; color:var(--muted); }
-  .ops .txt { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* 历史里那一列文字：允许折行（最多两行），太长再省略——
+     一行到底会把「修改 2026 年 12 月预算为 ¥3000.00」这种直接截断 */
+  .ops .txt { flex:1; min-width:0; overflow:hidden; word-break:break-word;
+              display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .ops .undo { border:1px solid #e2e6ee; background:#fff; border-radius:8px;
                font-size:11px; padding:2px 8px; cursor:pointer; color:#64748b; }
   .ops .undo:disabled { opacity:.45; cursor:default; }
@@ -342,7 +347,8 @@
 
   /* 黑夜模式：中性灰，只覆写颜色不动布局 */
   [data-theme="dark"] { --bg:#1e1e1e; --card:#2a2a2a; --ink:#e8e8e8; --muted:#9aa0a6; }
-  [data-theme="dark"] .dialog { background:#2f2f2f; }
+  [data-theme="dark"] .dialog { background:#33343a;
+                                box-shadow:0 24px 64px rgba(0,0,0,.60), 0 2px 8px rgba(0,0,0,.40); }
   [data-theme="dark"] .ops .undo,
   [data-theme="dark"] .keyrow button { background:#3a3a3a; border-color:#464646; color:#d6d6d6; }
   [data-theme="dark"] .seg { background:#242424; }
@@ -354,6 +360,11 @@
   [data-theme="dark"] .ledger-day { color:#9aa0a6; border-bottom-color:#6b7280; }
   [data-theme="dark"] .logs { border-top-color:#3a3a3a; }
   [data-theme="dark"] .bar-track { background:#383838; }
+  /* 暗色下「偏黑」要反过来：亮色里压深的字，这里要提亮，不然糊在深底上 */
+  [data-theme="dark"] .panel h3,
+  [data-theme="dark"] .bar-val { color:#b9c1cc; }
+  [data-theme="dark"] .bar-name { color:#d4dae2; }
+  [data-theme="dark"] .trend .lbl { color:#98a2b0; }
   [data-theme="dark"] .trend .bar { background:#4a5a6d; }
   [data-theme="dark"] .fab { background:#2a2a2a; border-color:#3a3a3a; color:#b5b5b5; }
   [data-theme="dark"] .entry input,
@@ -430,12 +441,18 @@
   [data-theme="dark"] .fab-notice .dot { border-color:#2a2a2a; }
   .amt-mini { color:#9aa4b2; font-size:11px; margin-left:6px; font-weight:400; }
 
-  .mask { position:fixed; inset:0; background:rgba(15,23,42,.35); display:flex;
+  /* 遮罩用中性灰：原来带蓝调（rgba(15,23,42)）会跟卡片蓝混在一起 */
+  .mask { position:fixed; inset:0; background:rgba(23,23,23,.36); display:flex;
           align-items:center; justify-content:center; padding:16px; }
   .mask[hidden] { display:none; }
-  .dialog { background:#fff; border-radius:16px; padding:20px; width:100%; max-width:380px; }
+  .dialog { background:#fdfdff; border-radius:16px; padding:22px 24px; width:100%; max-width:400px;
+            /* 阴影要够大够软：弹窗底下是半透明遮罩，阴影是让人一眼看出「浮在最上层」的东西 */
+            box-shadow:0 24px 64px rgba(15,23,42,.30), 0 2px 8px rgba(15,23,42,.12); }
   .dialog h2 { margin:0 0 12px; font-size:16px; }
   .dialog label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  /* 编辑框字数：贴到 label 右边，满 100 变红 */
+  .dialog label .count { float:right; font-size:11px; opacity:.8; font-variant-numeric:tabular-nums; }
+  .dialog label .count.full { color:var(--red); opacity:1; }
   .dialog input { width:100%; padding:10px 12px; border:1px solid #e2e6ee; border-radius:10px; font-size:15px; }
   .dialog .err { min-height:18px; margin-top:10px; font-size:13px; color:var(--red); }
   .when-row { display:flex; gap:10px; }
@@ -560,8 +577,8 @@
 <div class="mask" id="mask" hidden>
   <div class="dialog">
     <h2>编辑这笔账</h2>
-    <label for="editText">做了什么事</label>
-    <input id="editText" autocomplete="off">
+    <label for="editText">做了什么事 <span class="count" id="editCount">0 / 100</span></label>
+    <input id="editText" autocomplete="off" maxlength="100">
     <label for="editAmount">金额（元）</label>
     <input id="editAmount" type="number" step="0.01" min="0" inputmode="decimal">
     <div class="when-row">
@@ -693,7 +710,7 @@
           <div class="row-setting">
             <div>
               <div class="set-title">每月默认预算</div>
-              <div class="muted">设置为 0 即默认不用预算</div>
+              <div class="muted">未来每月的固定预算，从本月起生效</div>
             </div>
             <div class="budget-input">
               <input id="budDefault" type="number" min="0" step="100" placeholder="0"
@@ -819,6 +836,8 @@ function hint(msg, isError = false) {
    spendWarn 由 loadStats() 算出来，是「这个月花得有点多了」那句提示的数据来源。 */
 let live2dOn = true;
 let spendWarn = "";
+/* 「比上月多花/少花 X%」那句话的副本。页面上的字永远在，这个只是给看板娘复读用的。 */
+let spendNoteText = "";
 
 function waifuSay(text) {
   try {
@@ -965,6 +984,9 @@ async function loadStats() {
   // 标题跟着看的是哪个月变，别让人以为永远在说「这个月」
   $("catsTitle").textContent = isThisMonth() ? "这个月花在哪" : `${monthName()} 花在哪`;
   paintSpendNote(d);
+  // 那句「比上月多花/少花 X%」存一份给看板娘复读。
+  // 注意是**复读**：字已经写在页面上了，看板娘只是多一个声道，关掉它不影响读。
+  spendNoteText = $("spendNote").hidden ? "" : $("spendNote").textContent;
 }
 
 /* 本月 vs 上月的结论：先落到页面上（关掉看板娘也一定看得见），
@@ -1154,6 +1176,12 @@ function thisMonth() {
   const n = new Date();
   return n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0");
 }
+/* 今天，YYYY-MM-DD。拿来跟 <input type=date> 的值直接比大小（同格式的字符串比较就是日期比较） */
+function todayStr() {
+  const n = new Date();
+  return n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0")
+       + "-" + String(n.getDate()).padStart(2, "0");
+}
 let viewMonth = thisMonth();
 function isThisMonth() { return viewMonth === thisMonth(); }
 function monthName() {
@@ -1295,6 +1323,9 @@ async function setMonth(ym) {
   const d = await (await fetch("/api/summary?month=" + viewMonth)).json();
   renderCard(d);
   await loadStats();
+  // 切月份是主动操作，这里让看板娘把对比结论说一句。
+  // 刷新页面和记账时不说话——那两个时机已经有「记好啦」，再多说就吵了。
+  waifuSay(spendNoteText);
 }
 
 $("prevMonth").addEventListener("click", () => setMonth(shiftMonthStr(viewMonth, -1)));
@@ -1597,9 +1628,19 @@ $("list").addEventListener("click", (e) => {
   const when = String(btn.dataset.when || "");
   $("editDate").value = when.slice(0, 10);
   $("editTime").value = when.length > 10 ? when.slice(11, 16) : "";
+  paintEditCount();
   $("mask").hidden = false;
   $("editText").focus();
 });
+
+/* 编辑框字数：按「字符」算，一个汉字算 1（跟后端 len() 一致，不是 UTF-8 字节数） */
+function paintEditCount() {
+  const n = $("editText").value.length;
+  const el = $("editCount");
+  el.textContent = n + " / 100";
+  el.classList.toggle("full", n >= 100);
+}
+$("editText").addEventListener("input", paintEditCount);
 
 function closeEdit() { $("mask").hidden = true; editingId = null; }
 $("editCancel").addEventListener("click", closeEdit);
@@ -1628,6 +1669,18 @@ $("editSave").addEventListener("click", async () => {
   const clock = $("editTime").value;
   if (!day) { $("editErr").textContent = "日期不能为空"; return; }
   const occurred_at = clock ? `${day} ${clock}` : day;
+
+  // 账本记的是已经花掉的钱，时间跑到未来要先问一句。
+  // 光比日期不够：今天 17:00 记一笔今天 23:00 的，日期是「今天」但时刻还没到。
+  // 只填日期不填时刻的不算——「今天午饭」本来就不该被拦。
+  const future = day > todayStr()
+    || (!!clock && new Date(`${day}T${clock}`) > new Date());
+  if (future) {
+    const yes = await askConfirm(
+      `${day} ${clock || ""}`.trim() + " 还没到。确定要记一笔「以后才花」的账吗？",
+      "时间在未来", 0);
+    if (!yes) return;
+  }
 
   let confirmLarge = false;
   for (;;) {
@@ -2079,7 +2132,7 @@ async function deleteTx(id) {
 }
 
 /* ---------- 操作历史 ---------- */
-const OP_LABEL = { create: "新增", edit: "修改", delete: "删除", restore: "恢复" };
+const OP_LABEL = { create: "新增", edit: "修改", delete: "删除", restore: "恢复", budget: "预算" };
 
 async function loadOps() {
   const list = $("opsList");
