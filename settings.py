@@ -16,9 +16,10 @@ DEFAULTS = {
     "asr_backend": ASR_BACKEND,
     "live2d": True,          # 看板娘默认开（具体渲染见 HANDOFF_LIVE2D.md）
     "theme": "auto",         # light / dark / auto
-    "monthly_budget": 0,     # 每月默认预算（元）。0 = 没设，卡片上不显示预算
     "background": "",        # 卡片背景图文件名；空 = 用默认渐变
 }
+# 注：默认预算**不在这里**。它是按「生效区间」存在 SQLite 的 budget_defaults 表里的，
+# 因为一个全局字段没法表达「11 月起 3000、12 月起 4000」这种历史。见 storage.get_default_budget。
 
 
 def load() -> dict:
@@ -54,15 +55,12 @@ def api_key() -> str:
 
 
 def monthly_budget() -> int:
-    """每月默认预算，单位**分**。0 表示没设。
+    """**已废弃**：默认预算改成按「生效区间」存在 SQLite 里了（`budget_defaults` 表）。
 
-    json 里存的是元（给人看），这里统一换成和账目一样的「分」，免得两套单位打架。
-    文件被手改坏了也不抛异常，退回 0 就行——预算坏了不该拖垮整个服务。
+    这儿留一个说明而不是直接删干净，是因为老的 `settings.json` 里可能还留着
+    `monthly_budget` 字段——读到也当没看见，真相以表为准（见 storage.get_default_budget）。
     """
-    try:
-        return max(0, int(round(float(load().get("monthly_budget") or 0) * 100)))
-    except (TypeError, ValueError):
-        return 0
+    return 0
 
 
 def mask_key(key: str) -> str:

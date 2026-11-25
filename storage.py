@@ -64,13 +64,30 @@ create table if not exists queries (
 create index if not exists idx_q_time on queries(created_at);
 
 -- 预算：只存「单独设过」的月份。
--- 没记录的月份跟随设置里的「每月默认预算」，所以改默认值会连带影响所有没单独设过的月份。
--- 一旦某个月单独设过，它就固定下来，之后改默认值不会动它——历史不能被未来的设置改写。
+-- 没记录的月份去 budget_defaults 里找当时生效的默认值。
 create table if not exists budgets (
     month        text    primary key,     -- 2026-11
     amount_cents integer not null,        -- 本月总预算（分）
     updated_at   text    not null default (datetime('now', 'localtime'))
 );
+
+-- 默认预算的「生效区间」。
+-- 每行表示：从 month_from 到 month_to（含）这段时间，默认预算是 amount_cents。
+-- month_to 为 NULL = 这段至今仍然有效（最新的一段）。
+--
+-- 为什么不用一个全局的 monthly_budget 字段：
+--   那样改一次默认值，回看三年前的月份也会套上今天的数——历史被后来的设置篡改了。
+--   拆成段之后，2026-11 改过一次、2026-12 又改一次，两段各记各的，
+--   查哪个月就用当时那段的数，跟账目的 occurred_at 是同一条原则。
+create table if not exists budget_defaults (
+    id           integer primary key autoincrement,
+    month_from   text    not null,        -- 从哪个月开始生效（含）
+    month_to     text,                    -- 到哪个月结束（含）；NULL = 至今
+    amount_cents integer not null,        -- 这段时间的默认预算（分）
+    created_at   text    not null default (datetime('now', 'localtime'))
+);
+
+create index if not exists idx_bd_range on budget_defaults(month_from, month_to);
 """
 
 
@@ -223,13 +240,18 @@ def operations(limit: int = 100) -> list[dict]:
     """全局操作历史，新的在上面，带上当时的文字方便一眼看懂。"""
     con = _connect()
     try:
-        rows = con.execute(
+        rows = [dict(r) for r in con.execute(
             "select o.*, t.text as tx_text, t.deleted_at as tx_deleted"
             " from operations o left join transactions t on t.id = o.tx_id"
-            " order by o.id desc limit ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+            " order by o.id desc limit ?", (limit,)).fetchall()]
     finally:
         con.close()
+    # 预算记录的 tx_id 是 0（不对应任何账目），文字得自己拼一句，
+    # 前端才不用去 JSON.parse 两个字段
+    for row in rows:
+        if row["kind"] == "budget":
+            row["tx_text"] = budget_op_text(row)
+    return rows
 
 
 def undo(op_id: int) -> bool:
@@ -255,6 +277,32 @@ def undo(op_id: int) -> bool:
                 " updated_at = datetime('now','localtime') where id = ?",
                 (before.get("text"), before.get("amount_cents"),
                  before.get("category"), tx_id))
+        elif kind == "budget" and before:
+            # 预算的撤销：把它改回 before 里那个值。
+            # 注意这里**直接写 SQL**，不调 set_default_budget——那个函数自己开连接，
+            # 当前连接还攥着事务，第二个连接会等到锁超时。
+            scope = before.get("scope")
+            month = before.get("month") or ""
+            value = before.get("amount_cents")
+            if scope == "month":
+                con.execute("delete from budgets where month = ?", (month,))
+                if value:
+                    con.execute(
+                        "insert into budgets (month, amount_cents, updated_at)"
+                        " values (?, ?, datetime('now','localtime'))",
+                        (month, value))
+            elif scope == "default":
+                # 撤销默认预算：把「当前这段」的金额改回去，不重开新段。
+                # 撤销一般发生在同一个月里，当前段就是刚被改的那一段。
+                cur = con.execute(
+                    "select id from budget_defaults"
+                    " where month_to is null order by month_from desc limit 1").fetchone()
+                if cur is not None:
+                    if value:
+                        con.execute("update budget_defaults set amount_cents = ? where id = ?",
+                                    (value, cur["id"]))
+                    else:
+                        con.execute("delete from budget_defaults where id = ?", (cur["id"],))
 
         con.execute("update operations set undone = 1 where id = ?", (op_id,))
         con.commit()
@@ -486,6 +534,107 @@ def set_budget(year_month: str, amount_cents: int | None) -> None:
         con.commit()
     finally:
         con.close()
+
+
+def prev_month(year_month: str) -> str:
+    """2026-12 -> 2026-11；2026-01 -> 2025-12。"""
+    y, m = int(year_month[:4]), int(year_month[5:7])
+    m -= 1
+    if m == 0:
+        y, m = y - 1, 12
+    return f"{y:04d}-{m:02d}"
+
+
+def get_default_budget(year_month: str) -> int | None:
+    """某个月**当时**生效的默认预算（分）。
+
+    没被任何区间覆盖就是 None——表示「那会儿还没设过默认预算」，
+    不是 0。这个区分很重要：0 是「明确设成不用预算」，None 是「压根没这回事」。
+    """
+    con = _connect()
+    try:
+        row = con.execute(
+            "select amount_cents from budget_defaults"
+            " where month_from <= ? and (month_to is null or month_to >= ?)"
+            " order by month_from desc limit 1",
+            (year_month, year_month)).fetchone()
+        return int(row["amount_cents"]) if row else None
+    finally:
+        con.close()
+
+
+def set_default_budget(amount_cents: int | None, since: str) -> None:
+    """把 since 这个月起的默认预算改成 amount_cents（传 0/None 就是关掉）。
+
+    做法是「截断旧段、开新段」，不覆盖历史：
+        原来 2026-11 起是 3000，现在（2026-12）改成 4000
+        → 旧段 2026-11 ~ 2026-11 保持 3000
+        → 新段 2026-12 ~ 至今   是 4000
+    这样回看 11 月还是 3000，12 月才是 4000。改多少次都不会篡改以前的数据。
+
+    同一个月里反复改（比如按上下箭头连点）只更新当前段，不堆一堆同月的段。
+    """
+    con = _connect()
+    try:
+        cur = con.execute(
+            "select id, month_from from budget_defaults"
+            " where month_to is null order by month_from desc limit 1").fetchone()
+
+        # 当前段就是这个月开始的：直接改值，别开新段（否则同一个月会出现两段）
+        if cur is not None and cur["month_from"] >= since:
+            con.execute("update budget_defaults set amount_cents = ? where id = ?",
+                        (max(0, int(amount_cents or 0)), cur["id"]))
+            if not amount_cents:
+                # 改成 0 = 关掉，这一段直接删掉，免得留一段金额为 0 的区间
+                con.execute("delete from budget_defaults where id = ?", (cur["id"],))
+        else:
+            if cur is not None:
+                con.execute("update budget_defaults set month_to = ? where id = ?",
+                            (prev_month(since), cur["id"]))
+            if amount_cents and int(amount_cents) > 0:
+                con.execute(
+                    "insert into budget_defaults (month_from, amount_cents) values (?, ?)",
+                    (since, int(amount_cents)))
+        con.commit()
+    finally:
+        con.close()
+
+
+def log_budget(scope: str, month: str,
+               before: int | None, after: int | None) -> int:
+    """记一条预算改动到 operations，让它跟账目一样能在历史里看见、能撤销。
+
+    scope = 'default'（每月默认预算）或 'month'（单独设某个月）。
+    两种都存同一个形状：{"scope":…, "month":…, "amount_cents":…}，
+    amount_cents 为 null 表示「当时没有预算」。
+    """
+    con = _connect()
+    try:
+        _log(con, "budget", 0,
+             {"scope": scope, "month": month, "amount_cents": before},
+             {"scope": scope, "month": month, "amount_cents": after})
+        con.commit()
+        return int(con.execute("select last_insert_rowid()").fetchone()[0])
+    finally:
+        con.close()
+
+
+def budget_op_text(op: dict) -> str:
+    """把一条预算操作翻译成一句人话，历史记录列表里直接显示。"""
+    after = json.loads(op["after_json"]) if op.get("after_json") else {}
+    before = json.loads(op["before_json"]) if op.get("before_json") else {}
+    scope = after.get("scope") or before.get("scope")
+    month = after.get("month") or before.get("month") or ""
+    value = after.get("amount_cents")
+    label = f"{int(month[:4])} 年 {int(month[5:7])} 月" if len(month) >= 7 else ""
+
+    if scope == "default":
+        if value:
+            return f"每月默认预算改为 ¥{value / 100:.2f}（{label} 起）"
+        return f"关掉每月默认预算（{label} 起）"
+    if value:
+        return f"修改 {label} 预算为 ¥{value / 100:.2f}"
+    return f"清除 {label} 的单独预算"
 
 
 def yuan(cents: int | None) -> str:

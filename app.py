@@ -40,6 +40,7 @@ BG_MAX_BYTES = 8 * 1024 * 1024
 MAX_AMOUNT_CENTS = 10_000_000     # 超过 10 万要二次确认
 HARD_MAX_CENTS = 100_000_000      # 超过 100 万直接拒绝（确认了也不行）
 MAX_TEXT_LEN = 200
+MAX_EDIT_TEXT_LEN = 100           # 编辑「做了什么」的上限：按字符数算，一个汉字算 1
 
 # 一句话里可能有好几笔，按这些标点拆开
 CLAUSE_SPLIT = re.compile(r"[，,。；;、\n]+")
@@ -49,7 +50,28 @@ CLAUSE_SPLIT = re.compile(r"[，,。；;、\n]+")
 async def lifespan(_app: FastAPI):
     """服务启动时建表。第一次跑会自动创建 data/app.db。"""
     storage.init()
+    _migrate_legacy_budget()
     yield
+
+
+def _migrate_legacy_budget() -> None:
+    """老版本的「每月默认预算」存在 settings.json 里，搬进 budget_defaults 一次就够。
+
+    不做这一步的话，升级后用户原来设的预算会凭空消失（表里没段、json 里那个字段没人读了）。
+    只在「表里还没有任何段」时搬，避免每次启动都盖掉用户后来改的值。
+    """
+    legacy = runtime.load().get("monthly_budget")
+    if not legacy:
+        return
+    today = date.today().strftime("%Y-%m")
+    if storage.get_default_budget(today) is not None:
+        return
+    try:
+        cents = int(round(float(legacy) * 100))
+    except (TypeError, ValueError):
+        return
+    if cents > 0:
+        storage.set_default_budget(cents, today)
 
 
 app = FastAPI(title="记账小助手", version="0.1", lifespan=lifespan)
@@ -206,6 +228,10 @@ def _settings_payload() -> dict:
     data["has_key"] = bool(key)
     data["key_hint"] = runtime.mask_key(key)
     data["has_background"] = _background_file() is not None
+    # 默认预算的真相在 budget_defaults 表里（分段存），settings.json 里那个字段只是历史残留，
+    # 这里用「当前月生效的那个数」盖掉它，前端拿到的永远是现在真正在用的值
+    current = storage.get_default_budget(date.today().strftime("%Y-%m"))
+    data["monthly_budget"] = (current or 0) / 100
     return data
 
 
@@ -231,7 +257,14 @@ def write_settings(body: SettingsBody) -> dict:
         "theme": body.theme,
     }
     if body.monthly_budget is not None:
-        updates["monthly_budget"] = check_budget_yuan(body.monthly_budget)
+        # 默认预算不再塞进 settings.json：改成写 budget_defaults 的「区间」，
+        # 这样它只管「从现在开始」，回看以前的月份还是当时那个数
+        today = date.today().strftime("%Y-%m")
+        before = storage.get_default_budget(today)
+        after = int(round(check_budget_yuan(body.monthly_budget) * 100)) or None
+        if after != before:                       # 值没变就别刷历史记录
+            storage.set_default_budget(after, today)
+            storage.log_budget("default", today, before, after)
     if body.api_key is not None:
         updates["api_key"] = body.api_key.strip()
     runtime.save(updates)
@@ -354,15 +387,18 @@ def check_budget_yuan(value: float | None) -> float:
 def _budget_for(ym: str) -> tuple[int | None, str | None]:
     """某个月真正生效的预算：(金额分, 来源)。
 
-    来源 custom = 这个月单独设过；default = 跟着「每月默认预算」走；None = 压根没设。
-    预算只管「这个月打算花多少」，跟收入没有任何关系——它是一把事先插好的尺子，
-    不随这个月进账多少而移动。
+    来源 custom = 这个月单独设过；default = 当时那段默认预算覆盖到了这个月；
+    None = 那个月压根没设过预算。
+
+    注意 default 是**按月份去查当时生效的那一段**，不是拿今天的默认值套上去：
+    2026-11 你有 3000、12 月改成 4000，回看 11 月仍然是 3000。
+    老月份没有对应的段，就是「没设过」，不会凭空冒出一个今天的数字。
     """
     custom = storage.get_budget(ym)
     if custom is not None:
         return custom, "custom"
-    default = runtime.monthly_budget()
-    if default > 0:
+    default = storage.get_default_budget(ym)
+    if default:
         return default, "default"
     return None, None
 
@@ -375,7 +411,11 @@ def write_budget(body: BudgetBody) -> dict:
     11 月还是 3500。历史不该被后来的设置改写。
     """
     ym = check_month(body.month)
-    storage.set_budget(ym, int(round(check_budget_yuan(body.yuan) * 100)) or None)
+    before = storage.get_budget(ym)
+    after = int(round(check_budget_yuan(body.yuan) * 100)) or None
+    if after != before:                          # 值没变就别刷历史记录
+        storage.set_budget(ym, after)
+        storage.log_budget("month", ym, before, after)
     budget, src = _budget_for(ym)
     return {"month": ym, "budget_cents": budget, "budget_source": src}
 
@@ -497,7 +537,9 @@ def create_transaction(tx: NewTransaction) -> dict:
     """存账。一句话里有多笔消费就按标点拆开，各存一条。
 
     例：「昨天打车32，今天吃饭15」→ 两条账。
-    分句里没有金额的（「和同事AA」）直接跳过，不产生垃圾数据。
+    分句里没有金额的不会凭空造一笔，但**也不会被扔掉**：
+    紧挨着有金额那句的，就拼进那一笔的文字里（「及你太美22块，我爱蔡徐坤」
+    → 一笔 22 块，文字是原话）。一句金额都没有才报错。
     """
     if len(tx.text) > MAX_TEXT_LEN:
         raise HTTPException(status_code=400, detail=f"这句话太长了（最多 {MAX_TEXT_LEN} 字）")
@@ -510,13 +552,23 @@ def create_transaction(tx: NewTransaction) -> dict:
         # 先把每一句都校验完，再统一写库：不然第二句被拦下时，第一句已经存进去了，
         # 接口返回 400 但数据落了库，用户重试就会多出一笔重复账。
         resolved = []
+        loose = []                            # 还没找到归属的「没金额」分句
         for clause in clauses:
             item = _resolve(clause, tx, budget)
             if item["amount"] is None:
-                continue                      # 没金额的分句不记
+                loose.append(clause)          # 先攒着，看能不能挂到某笔上
+                continue
+            if loose:                         # 挂到这一笔前面：「和同事AA，打车32」
+                item["text"] = "，".join(loose + [item["text"]])
+                loose = []
             check_vague_date(item, tx.occurred_at)
             check_amount(item["amount"], tx.confirm_large)
             resolved.append(item)
+
+        # 尾巴上还剩下的（「及你太美22块，我爱蔡徐坤」），并进最后一笔
+        if loose and resolved:
+            merged = resolved[-1]["text"] + "，" + "，".join(loose)
+            resolved[-1]["text"] = merged[:MAX_TEXT_LEN]
 
         if resolved:
             items = []
@@ -559,8 +611,10 @@ def edit_transaction(tx_id: int, body: EditTransaction) -> dict:
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="「做了什么」不能是空的")
-    if len(text) > MAX_TEXT_LEN:
-        raise HTTPException(status_code=400, detail=f"太长了（最多 {MAX_TEXT_LEN} 字）")
+    # 编辑框比记账框收得更紧：记账是原话，可以长一点；编辑是在改一句话的标题
+    if len(text) > MAX_EDIT_TEXT_LEN:
+        raise HTTPException(
+            status_code=400, detail=f"太长了（最多 {MAX_EDIT_TEXT_LEN} 字）")
 
     old = storage.get(tx_id)
     if old is None:
