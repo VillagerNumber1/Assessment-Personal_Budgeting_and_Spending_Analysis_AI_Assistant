@@ -123,28 +123,38 @@ def find_amount(text: str) -> tuple[int | None, str]:
     #    「iphone15手机5999」里 15 是型号、5999 才是钱；
     #    「买了5090显卡」里 5090 是型号，整句其实没有金额——
     #    宁可报「没听出金额」，也别把型号当钱记下去（那也是替用户编数据）。
-    best_score, best_match = 0, None
+    best = None                           # (分数, 数值, match)
     for m in re.finditer(r"(\d+(?:\.\d{1,2})?)", text):
         tail = text[m.end():m.end() + 1]
+        head = text[m.start() - 1:m.start()] if m.start() > 0 else ""
         if tail and tail in COUNTERS:
             continue                      # 「3个人」「2张票」这种量词，肯定不是钱
+
         score = 0
         if tail in ("元", "块", "圆", "¥", "￥"):
             score += 100                  # 带货币单位，最可信
-        if not tail or tail in "，,。.！!？?、；; \t":
-            score += 40                   # 落在句尾
+        if not tail or tail in "，,。.！!？?、；;":   # 真·句尾（空格不算，后面还有内容）
+            score += 40
         if tail and "\u4e00" <= tail <= "\u9fff" and tail not in ("元", "块", "圆"):
             score -= 50                   # 后面紧跟名词：「5090显卡」的 5090
-        if score > best_score:            # 同分取前面的
-            best_score, best_match = score, m
+        if head.isascii() and head.isalpha():
+            score -= 60                   # 前面紧贴英文字母：「matext2」的 2 是型号的一部分
 
-    if best_match is None:
+        if score <= 0:
+            continue
+        # 同分就取数值大的：「华为matext2 21999」两个都像句尾时，钱是大的那个
+        cand = (score, float(m.group(1)), m)
+        if best is None or cand[:2] > best[:2]:
+            best = cand
+
+    if best is None:
         return None, ""
-    cents = round(float(best_match.group(1)) * 100)
+    m = best[2]
+    cents = round(best[1] * 100)
     # 前面紧挨着负号的记成负数（退款/冲正），收不收由上层决定
-    if best_match.start() > 0 and text[best_match.start() - 1] in "-−":
+    if m.start() > 0 and text[m.start() - 1] in "-−":
         cents = -cents
-    return cents, best_match.group(0)
+    return cents, m.group(0)
 
 
 def find_time(text: str) -> tuple[int, int] | None:
