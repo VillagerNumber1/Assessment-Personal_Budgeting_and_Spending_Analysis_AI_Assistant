@@ -24,6 +24,10 @@
     --fill-hover: #e6eefc;
     --field: #fff;          /* 输入框底 */
     --sunken: #eef2f8;      /* 凹陷槽（分段控件） */
+    /* 分段控件的选中块：必须比凹槽亮一档。以前直接借用 --field，
+       暗色下 --field 和 --sunken 同为 #242424，选中块就整个消失了（2026-11-26 修） */
+    --seg-on: #fff;
+    --switch-off: #d7dee8;  /* 开关关着时的轨道：暗色下要压暗，不能还是亮灰白 */
 
     /* 线 */
     --line: #e2e6ee;        /* 主边框 */
@@ -191,15 +195,33 @@
     .budget-left { font-size:12px; }
   }
 
-  .entry { display:flex; gap:8px; margin:18px 0 6px; }
-  .entry input { flex:1; padding:12px 14px; border:1px solid var(--line); border-radius:12px;
-                 font-size:15px; background:var(--card); outline:none; min-width:0; }
-  .entry input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(47,124,246,.12); }
-  .entry button { padding:0 18px; border:0; border-radius:12px; background:var(--accent);
-                  color:#fff; font-size:15px; cursor:pointer; white-space:nowrap; }
-  .entry button:disabled { opacity:.6; cursor:default; }
-  .entry .mic { background:var(--sunken); color:var(--ink-2); font-size:18px; padding:0 14px; }
-  .entry .mic.rec { background:var(--red); color:#fff; }
+  /* 记账框：DeepSeek 那种「上面输入、下面一条工具栏」的聊天框。
+     输入区自己不画边框，整块卡片才是焦点——边框只在外层出现一次，不然像两个框套着。
+     工具栏左边：回形针（导账单 / 以后的图片 OCR）+ 麦克风；右边：向上箭头提交。 */
+  .composer { margin:18px 0 6px; padding:10px 10px 8px 14px;
+              background:var(--card); border:1px solid var(--line); border-radius:20px;
+              transition:border-color .15s, box-shadow .15s, background .15s; }
+  .composer:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px rgba(47,124,246,.12); }
+  /* 文件拖到框上：整块泛蓝，告诉用户「松手就收」 */
+  .composer.over { border-color:var(--accent); background:var(--accent-weak); }
+  .composer textarea { display:block; width:100%; min-height:26px; max-height:120px;
+                       padding:4px 2px; border:0; outline:none; resize:none; overflow-y:auto;
+                       background:transparent; color:var(--ink); font:inherit; font-size:15px;
+                       line-height:1.6; }
+  .composer textarea::placeholder { color:var(--muted); }
+  .composer-tools { display:flex; align-items:center; justify-content:space-between; gap:8px;
+                    margin-top:4px; }
+  .tools-left { display:flex; align-items:center; gap:2px; }
+  .tool-btn { width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+              border:0; border-radius:10px; background:transparent; color:var(--ink-4); cursor:pointer; }
+  .tool-btn:hover { background:var(--fill); color:var(--accent); }
+  /* 录音中整颗变红：它是「正在发生的事」，得一眼看见 */
+  .tool-btn.mic.rec { background:var(--red); color:#fff; }
+  .composer .send { width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+                    border:0; border-radius:50%; background:var(--accent); color:#fff;
+                    cursor:pointer; transition:filter .15s; }
+  .composer .send:hover { filter:brightness(.94); }
+  .composer .send:disabled { background:var(--fill); color:var(--muted); cursor:default; filter:none; }
 
   .hint { min-height:22px; font-size:13px; color:var(--muted); padding-left:4px; }
   .hint b { color:var(--ink); font-weight:600; }
@@ -293,7 +315,7 @@
   .seg { display:flex; background:var(--sunken); border-radius:12px; padding:4px; margin:12px 0 14px; }
   .seg button { flex:1; border:0; background:transparent; padding:8px 0; border-radius:9px;
                 font-size:14px; color:var(--ink-4); cursor:pointer; }
-  .seg button.on { background:var(--field); color:var(--accent-ink); font-weight:600;
+  .seg button.on { background:var(--seg-on); color:var(--accent-ink); font-weight:600;
                    box-shadow:0 1px 3px rgba(16,24,40,.12); }
   .sect h3 { margin:14px 0 6px; font-size:13px; color:var(--ink-2); }
   .sect .muted { color:var(--muted-2); font-size:13px; margin:2px 0; }
@@ -402,7 +424,7 @@
   /* 设置面板里的整段说明也收小，跟行内描述同一级（别覆盖卡片上的 .budget-num.muted，
      那个是靠 opacity 在蓝底上变淡的，给了 color 会发脏） */
   .pane p.muted { font-size:12px; line-height:1.6; color:var(--muted); }
-  .switch { width:42px; height:24px; border-radius:999px; border:0; background:#d7dee8;
+  .switch { width:42px; height:24px; border-radius:999px; border:0; background:var(--switch-off);
             position:relative; cursor:pointer; flex:none; transition:background .2s; }
   .switch::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px;
                    border-radius:50%; background:#fff; transition:transform .2s; }
@@ -419,6 +441,10 @@
     --fill-hover: #454545;
     --field: #242424;
     --sunken: #242424;
+    /* 凹槽和输入框在暗色下同深是对的；但分段控件的选中块得比它们亮一档，
+       不然「选中的是哪一格」只能靠字色区分（§7.9 的 ①） */
+    --seg-on: #3a3a3a;
+    --switch-off: #4a4b52;
 
     --line: #464646;
     --line-soft: #3a3a3a;
@@ -454,7 +480,7 @@
   
   /* 暗色下「偏黑」要反过来：亮色里压深的字，这里要提亮，不然糊在深底上 */
   
-  /* 标题右边那个查账框不是 .entry 里的，之前漏了：暗色下还是黑字黑底 */
+  /* 标题右边那个查账框同理：现在也走变量了，暗色下不用单独写 */
   
   /* 历史记录的小标签：每种操作一个颜色，暗色下必须**各自**重新定义。
      只写一条 `.ops .kind` 会把 create/delete/edit/query/budget 的颜色全抹平——
@@ -463,12 +489,9 @@
   /* 设置面板「模型」那一栏：说明文字原来是浅底深字，暗色下全糊了 */
 
   /* 主按钮在暗色下必须还是蓝底白字，别变白 */
-  [data-theme="dark"] .entry > button[type="submit"],
-  [data-theme="dark"] .entry #send,
   [data-theme="dark"] .dialog .actions .primary {
     background:var(--accent); border-color:var(--accent); color:#fff;
   }
-  [data-theme="dark"] .entry .mic.rec { background:var(--red); color:#fff; }
 
   /* 右上角通知：从右边滑进来，停 6 秒再收回去（参考 osu! 的 toast tray）
      底色是「浅白卡片 + 阴影」，不用整块绿/红——那种太重，像弹窗而不像提示。
@@ -660,11 +683,39 @@
     </div>
   </div>
 
-  <!-- 记账框：恢复原样，一个宽输入框 + 记一笔 + 录音 -->
-  <form class="entry" id="form">
-    <input id="text" placeholder="记账：比如「昨天打车32」" autocomplete="off" autofocus>
-    <button id="send" type="submit">记一笔</button>
-    <button id="mic" type="button" class="mic" title="点一下开始录音，再点一下结束">🎤</button>
+  <!-- 记账框：DeepSeek 那种「上输入、下工具栏」的聊天框。
+       左下角回形针（账单 CSV，图片留给以后的 OCR）+ 麦克风，右下角向上箭头提交。
+       回车 = 提交，Shift+回车 = 换行（跟聊天框的习惯一致）。 -->
+  <form class="composer" id="form">
+    <textarea id="text" rows="1" placeholder="记账：比如「昨天打车32」"
+              autocomplete="off" autofocus></textarea>
+    <div class="composer-tools">
+      <div class="tools-left">
+        <input id="attachFile" type="file" accept=".csv,.txt,image/*" hidden>
+        <button type="button" class="tool-btn" id="attachBtn" title="附加文件：账单 CSV（图片 OCR 在下一步）">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m20.4 11.6-8.6 8.6a5.6 5.6 0 0 1-7.9-7.9l8-8a3.7 3.7 0 0 1 5.3 5.3
+                     l-8 8a1.9 1.9 0 0 1-2.6-2.6l7.4-7.4"/>
+          </svg>
+        </button>
+        <button id="mic" type="button" class="tool-btn mic" title="点一下开始录音，再点一下结束">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2.8a3 3 0 0 0-3 3v6.4a3 3 0 0 0 6 0V5.8a3 3 0 0 0-3-3Z"/>
+            <path d="M5.8 10.6v1.8a6.2 6.2 0 0 0 12.4 0v-1.8"/>
+            <path d="M12 18.6v2.6"/>
+          </svg>
+        </button>
+      </div>
+      <button id="send" type="submit" class="send" title="记一笔（回车）" aria-label="记一笔">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+             stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19V5.4"/>
+          <path d="m5.8 11.6 6.2-6.2 6.2 6.2"/>
+        </svg>
+      </button>
+    </div>
   </form>
 
   <div class="recrow" id="recrow" hidden>
@@ -1563,6 +1614,7 @@ $("nextPage").addEventListener("click", () => loadList(page + 1));
 /* 二次确认。lockSeconds > 0 时按钮先锁几秒（大额用），传 0 就是普通确认 */
 function askConfirm(msg, title = "金额确认", lockSeconds = 3) {
   return new Promise((resolve) => {
+    blurComposer();                 // 焦点圈会透出遮罩，见 blurComposer 的注释
     const mask = $("confirmMask"), ok = $("confirmOk"), cancel = $("confirmCancel");
     $("confirmTitle").textContent = title;
     $("confirmMsg").textContent = msg;
@@ -1666,6 +1718,27 @@ function looksLikeQuery(s) {
   return !hasMoney;                  // 带金额就当记账（「午饭44」）
 }
 
+/* 记账框：回车提交，Shift+回车换行；内容多了自己长高（最多 120px） */
+function paintComposer() {
+  const el = $("text");
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+}
+/* 弹窗盖上来时，先把输入框的焦点放下。
+   输入框聚焦时有一圈蓝边（.composer:focus-within），它比弹窗宽 8px，
+   会从半透明遮罩下面透出来，在弹窗左右两边画两条蓝线——量过才知道是它。 */
+function blurComposer() {
+  const el = document.activeElement;
+  if (el && el.closest && el.closest("#form")) el.blur();
+}
+$("text").addEventListener("input", paintComposer);
+$("text").addEventListener("keydown", (e) => {
+  // 中文输入法组词时的回车不算提交：isComposing 和 keyCode 229 都是组词中的信号
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  $("form").requestSubmit();
+});
+
 /* 记账框只管记账；查账走标题右边那个搜索框，互不干扰 */
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1674,6 +1747,7 @@ $("form").addEventListener("submit", async (e) => {
 
   if (looksLikeQuery(text)) {        // 兜底：这是问句，转去查账
     $("text").value = "";
+    paintComposer();
     $("qtext").value = text;
     hint("这句像是查账，帮你查了一下");
     flashSearch();                   // 闪两下，提醒「答案在上面的搜索框下面」
@@ -1683,7 +1757,7 @@ $("form").addEventListener("submit", async (e) => {
 
   const btn = $("send");
   btn.disabled = true;
-  try { await create(text); $("text").value = ""; }
+  try { await create(text); $("text").value = ""; paintComposer(); }
   finally { btn.disabled = false; $("text").focus(); }
 });
 
@@ -2072,6 +2146,7 @@ async function stopRec() {
   // 之前是直接调 create()，用户完全看不到识别成了什么，错了也没机会拦。
   // 后面的判断（是不是问句、要不要弹编辑框）跟打字走完全同一条路。
   $("text").value = text;
+  paintComposer();
   playOne(soundSuccess);
   $("form").requestSubmit();
 }
@@ -2369,7 +2444,8 @@ $("live2dSwitch").addEventListener("click", async () => {
 let importRows = [];
 let importBusy = false;
 
-function openImport() {
+function openImport(file) {
+  blurComposer();
   importRows = [];
   importBusy = false;
   $("importMask").hidden = false;
@@ -2382,6 +2458,8 @@ function openImport() {
   $("importConfirm").disabled = true;
   $("importConfirm").textContent = "导入 0 条";
   $("importFile").value = "";
+  // 从回形针 / 拖拽进来时，文件已经选好了，直接开始读，省得再点一次「选择文件」
+  if (file) previewImport(file);
 }
 
 function closeImport() {
@@ -2501,7 +2579,7 @@ async function confirmImport() {
   }
 }
 
-$("importBtn").addEventListener("click", openImport);
+$("importBtn").addEventListener("click", () => openImport());
 $("importPick").addEventListener("click", () => $("importFile").click());
 $("importCancel").addEventListener("click", () => { if (!importBusy) closeImport(); });
 $("importConfirm").addEventListener("click", confirmImport);
@@ -2528,11 +2606,57 @@ importDrop.addEventListener("drop", (e) => {
   const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
   if (file) previewImport(file);
 });
-// 拖歪了别让浏览器直接把文件打开（会离开记账页，看着像崩了）
-["dragover", "drop"].forEach((type) => {
-  window.addEventListener(type, (e) => {
-    if (!$("importMask").hidden) e.preventDefault();
+
+/* ---------- 聊天框左下角的回形针 ----------
+   一个入口管两种文件：账单表格进导入流程，图片留给 OCR。
+   OCR 还没接，所以图片要明说「还没做」——点完什么都不发生，比报错更让人困惑。 */
+function routeAttachedFile(file) {
+  if (!file) return;
+  const name = (file.name || "").toLowerCase();
+  if (/\.(csv|txt)$/.test(name)) { openImport(file); return; }
+  if (/^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/.test(name)) {
+    toast("图片 OCR 还没接上", false, "这次先导账单 CSV；小票那条在下一步");
+    hint("图片 OCR 还没做，先手动记一笔，或者选一份账单 CSV", true);
+    $("text").focus();
+    return;
+  }
+  toast("这个文件不认识", false, "只认 .csv / .txt 账单");
+}
+
+$("attachBtn").addEventListener("click", () => $("attachFile").click());
+$("attachFile").addEventListener("change", (e) => {
+  routeAttachedFile(e.target.files[0]);
+  e.target.value = "";                 // 同一个文件再选一次也要能触发 change
+});
+
+/* 文件直接拖到聊天框：跟回形针走同一条分流，不另写一份判断 */
+const composerEl = $("form");
+["dragenter", "dragover"].forEach((type) => {
+  composerEl.addEventListener(type, (e) => {
+    e.preventDefault();
+    composerEl.classList.add("over");
   });
+});
+["dragleave", "drop"].forEach((type) => {
+  composerEl.addEventListener(type, (e) => {
+    e.preventDefault();
+    composerEl.classList.remove("over");
+  });
+});
+composerEl.addEventListener("drop", (e) => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) routeAttachedFile(file);
+});
+/* 拖歪了别让浏览器把文件当网页打开（会离开记账页，看着像崩了），
+   顺手提示一句该往哪拖。dragover 必须一直 preventDefault，drop 才会落到我们手里。 */
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => {
+  if (!$("importMask").hidden) { e.preventDefault(); return; }
+  if (composerEl.contains(e.target)) return;      // 框里的 drop 自己处理过了
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+    e.preventDefault();
+    hint("把文件拖到下面的记账框里，就能导入账单", true);
+  }
 });
 
 /* 点遮罩关窗：跟设置窗同一套「按下和松开都在遮罩上」的判断，免得拖选文字时误关 */
@@ -2654,6 +2778,7 @@ $("settingsNav").addEventListener("click", (e) => {
 });
 
 $("settingsBtn").addEventListener("click", () => {
+  blurComposer();
   $("settingsMask").hidden = false;
   loadSettings();
 });
@@ -2664,6 +2789,7 @@ $("settingsClose").addEventListener("click", () => { $("settingsMask").hidden = 
    点进来填了当月，下个月又没了 */
 $("cardTop").addEventListener("click", (e) => {
   if (!e.target.closest("[data-budget]")) return;
+  blurComposer();
   $("settingsMask").hidden = false;
   loadSettings();
   const nav = document.querySelector('#settingsNav button[data-pane="budget"]');
