@@ -175,6 +175,59 @@ def get(tx_id: int) -> dict | None:
         con.close()
 
 
+def add_many(items: list[dict]) -> list[int]:
+    """一次存一批账（账单导入用），返回 id 列表。
+
+    为什么不循环调 add()：
+      - 一个事务里写完，中途出错整批回滚，不会留下「导入了一半」的库；
+      - 省掉每行开一次连接的开销（200 行就是 200 次）。
+    每行仍然各写一条 operations，所以历史记录里能逐条撤销。
+
+    items 里每项是 {text, amount_cents, occurred_at, category, kind}。
+    """
+    if not items:
+        return []
+    con = _connect()
+    try:
+        ids: list[int] = []
+        for item in items:
+            cur = con.execute(
+                "insert into transactions"
+                " (text, amount_cents, occurred_at, category, kind, status)"
+                " values (?, ?, ?, ?, ?, 'confirmed')",
+                (item["text"], item["amount_cents"],
+                 item.get("occurred_at") or date.today().isoformat(),
+                 item.get("category"),
+                 item.get("kind") if item.get("kind") in KINDS else "expense"),
+            )
+            new_id = int(cur.lastrowid)
+            _log(con, "create", new_id, None, _snapshot(con, new_id))
+            ids.append(new_id)
+        con.commit()
+        return ids
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def tx_keys() -> set[tuple]:
+    """已经存在的 (记账时间, 金额, 文字)，导入去重用。
+
+    只算没删的：用户删掉一笔之后再导同一份账单，应该能重新进来——
+    那是他明确删过的，不该被当成「重复」挡住。
+    """
+    con = _connect()
+    try:
+        rows = con.execute(
+            "select occurred_at, amount_cents, text from transactions"
+            " where deleted_at is null").fetchall()
+        return {(r["occurred_at"], r["amount_cents"], r["text"]) for r in rows}
+    finally:
+        con.close()
+
+
 def update(tx_id: int, text: str, amount_cents: int | None,
            category: str | None = None, kind: str | None = None,
            occurred_at: str | None = None) -> bool:

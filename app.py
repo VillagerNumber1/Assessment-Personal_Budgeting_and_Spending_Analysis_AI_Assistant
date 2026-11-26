@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import asr
 import audio_effectsRecovery as audio_fx
+import importer
 import llm
 import parser
 import query
@@ -36,6 +37,12 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 BACKGROUND_DIR = DATA_DIR / "backgrounds"
 BG_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 BG_MAX_BYTES = 8 * 1024 * 1024
+
+# 账单导入：只收文本表格，上限跟背景图一致——200 行的账单通常不到 200 KB。
+# 行数上限直接用解析层那个数，别在两处各写一个 5000（迟早会只改一处）
+IMPORT_SUFFIXES = {".csv", ".txt"}
+IMPORT_MAX_BYTES = 8 * 1024 * 1024
+IMPORT_MAX_ROWS = importer.MAX_ROWS
 
 MAX_AMOUNT_CENTS = 10_000_000     # 超过 10 万要二次确认
 HARD_MAX_CENTS = 100_000_000      # 超过 100 万直接拒绝（确认了也不行）
@@ -116,6 +123,20 @@ class BudgetBody(BaseModel):
     """POST /api/budget 的请求体：给某个月单独设预算。"""
     month: str | None = None            # 不传就是本月
     yuan: float | None = None           # 不传 / 0 = 清除，回到跟随默认
+
+
+class ImportRow(BaseModel):
+    """导入的一行账。前端把预览时那份数据原样传回来，字段名跟预览返回的一致。"""
+    text: str
+    amount_cents: int
+    occurred_at: str
+    kind: str | None = None
+    category: str | None = None
+
+
+class ImportBody(BaseModel):
+    """POST /api/import/commit 的请求体。"""
+    rows: list[ImportRow]
 
 
 _transcriber = None
@@ -741,3 +762,94 @@ async def transcribe(file: UploadFile = File(...)) -> dict:
         path.unlink(missing_ok=True)      # 语音是隐私，转完即删
 
     return {"ok": True, "text": text}
+
+
+# ---------- 账单导入 ----------
+# 两步走：先 /preview 只解析、不入库，用户看清楚「我读成了什么」；
+# 确认之后才 /commit 写库。点一下就直接灌库的话，读错一列得一条条删。
+
+@app.post("/api/import/preview")
+async def import_preview(file: UploadFile = File(...)) -> dict:
+    """上传一份 CSV，只解析、不写库。返回全部行（前端只展示前 20 条）。"""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in IMPORT_SUFFIXES:
+        raise HTTPException(status_code=400, detail="只认 .csv / .txt 文件")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="文件是空的")
+    if len(raw) > IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="文件太大了（上限 8 MB）")
+
+    try:
+        parsed = importer.parse_bytes(raw)
+    except importer.ImportParseError as exc:
+        # 解析层抛的是给人看的一句话，原样透给前端
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **parsed}
+
+
+@app.post("/api/import/commit")
+def import_commit(body: ImportBody) -> dict:
+    """把预览过的那份行写进库。
+
+    前端回传的行**全部重新校验**：预览和入库之间隔着一个可以改的 JSON，
+    而且金额、日期、类别本来就该跟手记账过同一套检查。
+    """
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="没有要导入的账目")
+    if len(body.rows) > IMPORT_MAX_ROWS:
+        raise HTTPException(status_code=400, detail=f"一次最多导 {IMPORT_MAX_ROWS} 行")
+
+    clean: list[dict] = []
+    bad: list[dict] = []
+    for index, row in enumerate(body.rows, 1):
+        text = (row.text or "").strip()[:MAX_TEXT_LEN]
+        if not text:
+            bad.append({"line": index, "reason": "没有说明文字"})
+            continue
+        try:
+            when = check_occurred_at(row.occurred_at)
+            check_amount(row.amount_cents, confirm_large=True)
+        except HTTPException as exc:
+            bad.append({"line": index, "reason": str(exc.detail)})
+            continue
+        if when is None:
+            bad.append({"line": index, "reason": "没有日期"})
+            continue
+
+        kind = row.kind if row.kind in storage.KINDS else parser.parse(text)["kind"]
+        # 类别只认白名单里的七种；传了别的值就当没传，按文字重新猜
+        category = row.category if row.category in parser.CATEGORY_WORDS else None
+        if category is None:
+            category = parser.parse(text)["category"]
+        clean.append({"text": text, "amount_cents": row.amount_cents,
+                      "occurred_at": when, "category": category, "kind": kind})
+
+    # 去重键跟手记账一致：(记账时间, 金额, 文字)。
+    # 同一批里出现两次也算重复，所以边查边往集合里塞。
+    existing = storage.tx_keys()
+    fresh: list[dict] = []
+    duplicated = 0
+    for item in clean:
+        key = (item["occurred_at"], item["amount_cents"], item["text"])
+        if key in existing:
+            duplicated += 1
+            continue
+        existing.add(key)
+        fresh.append(item)
+
+    try:
+        ids = storage.add_many(fresh)
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=500, detail=f"写入失败：{exc}") from exc
+
+    # 导入完把涉及到的月份告诉前端：卡片要跳到看得见这批账的那一个月
+    months = sorted({item["occurred_at"][:7] for item in fresh})
+    return {
+        "ok": True,
+        "imported": len(ids),
+        "duplicated": duplicated,
+        "skipped": len(bad),
+        "errors": bad[:20],
+        "months": months,
+    }

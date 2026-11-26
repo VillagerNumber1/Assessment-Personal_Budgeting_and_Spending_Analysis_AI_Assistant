@@ -554,6 +554,34 @@
   .dialog .actions button { padding:8px 16px; border-radius:10px; border:1px solid var(--line); background:var(--field); cursor:pointer; }
   .dialog .actions .primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .dialog .actions .primary:disabled { background:#cbd5e1; border-color:#cbd5e1; color:#fff; cursor:not-allowed; }
+
+  /* ---------- 账单导入 ----------
+     按钮在右下角第三个（通知 96、设置 22，导入往上摞到 170） */
+  .fab-import { bottom:170px; }
+  .import-dialog .actions .primary:disabled { background:var(--fill); border-color:var(--line);
+                                              color:var(--muted); }
+  .import-tip { margin:0 0 12px; font-size:13px; line-height:1.7; color:var(--muted); }
+  /* 投放区：虚线框，文件拖进来时整块变蓝——不给反馈的话不知道自己拖对没有 */
+  .import-drop { display:flex; flex-direction:column; align-items:center; gap:10px;
+                 padding:24px 14px; border:1px dashed var(--line-dash); border-radius:12px;
+                 background:var(--fill); transition:border-color .15s, background .15s; }
+  .import-drop.over { border-color:var(--accent); background:var(--accent-weak); }
+  .import-drop p { margin:0; font-size:12px; color:var(--muted); }
+  .import-sum { font-size:13px; color:var(--ink-3); line-height:1.7; margin:0 0 10px; }
+  .import-sum b { color:var(--ink); }
+  /* 预览表：只给 20 条，表头在滚动时钉住，长账单一屏也能对上列 */
+  .import-table-wrap { max-height:260px; overflow:auto; border:1px solid var(--line-soft);
+                       border-radius:10px; }
+  .import-table { width:100%; border-collapse:collapse; font-size:12px; }
+  .import-table th { position:sticky; top:0; z-index:1; background:var(--fill); color:var(--muted);
+                     text-align:left; font-weight:600; padding:7px 10px;
+                     border-bottom:1px solid var(--line-soft); }
+  .import-table td { padding:6px 10px; border-bottom:1px solid var(--line-soft); color:var(--ink-3); }
+  .import-table tr:last-child td { border-bottom:0; }
+  .import-table td.t { white-space:nowrap; color:var(--muted); }
+  .import-table td.money { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .import-table td.money.in { color:var(--green-ink); }
+  .import-more { margin:8px 0 0; font-size:12px; color:var(--muted); line-height:1.6; }
 </style>
 </head>
 <body>
@@ -716,6 +744,16 @@
   </svg>
   <span>通知</span>
   <span class="dot" id="noticeDot" hidden></span>
+</button>
+
+<button class="fab fab-import" id="importBtn" title="导入账单 CSV">
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+       stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.8v9.4"/>
+    <path d="M8.2 9.8 12 13.6l3.8-3.8"/>
+    <path d="M4.6 14.6v3.4a1.8 1.8 0 0 0 1.8 1.8h11.2a1.8 1.8 0 0 0 1.8-1.8v-3.4"/>
+  </svg>
+  <span>导入</span>
 </button>
 
 <div class="notice-panel" id="noticePanel" hidden>
@@ -889,6 +927,46 @@
     <div class="actions">
       <button type="button" id="confirmCancel">取消</button>
       <button type="button" id="confirmOk" class="primary" disabled>再确认（3）</button>
+    </div>
+  </div>
+</div>
+
+<!-- 账单导入：先读一遍给你看，确认了才写进库。
+     解析全在后端（importer.py），这里只管送文件、摆结果。 -->
+<div class="mask" id="importMask" hidden>
+  <div class="dialog wide import-dialog">
+    <h2>导入账单</h2>
+
+    <div id="importIntro">
+      <p class="import-tip">微信、支付宝导出的 CSV 都能认，自己做的「时间 / 金额 / 收支 / 备注」表也行。
+        先读一遍给你看，点确认才写进账本——读错了不用一条条删。</p>
+      <div class="import-drop" id="importDrop">
+        <input id="importFile" type="file" accept=".csv,.txt,text/csv" hidden>
+        <button type="button" class="mini-btn" id="importPick">选择 CSV 文件</button>
+        <p>或者把文件拖到这里</p>
+      </div>
+    </div>
+
+    <div id="importResult" hidden>
+      <div class="import-sum" id="importSum"></div>
+      <div class="import-table-wrap">
+        <table class="import-table">
+          <thead>
+            <tr>
+              <th>时间</th><th>内容</th><th>类别</th>
+              <th style="text-align:right">金额</th>
+            </tr>
+          </thead>
+          <tbody id="importRows"></tbody>
+        </table>
+      </div>
+      <p class="import-more" id="importMore"></p>
+    </div>
+
+    <div class="err" id="importErr"></div>
+    <div class="actions">
+      <button type="button" id="importCancel">关闭</button>
+      <button type="button" id="importConfirm" class="primary" disabled>导入 0 条</button>
     </div>
   </div>
 </div>
@@ -2282,6 +2360,189 @@ $("live2dSwitch").addEventListener("click", async () => {
       body: JSON.stringify({ live2d: live2dOn }),
     });
   } catch (err) {}
+});
+
+/* ---------- 账单导入 ----------
+   前端**不解析 CSV**：怎么认编码、怎么找表头全在 importer.py，两边各写一遍迟早对不上。
+   这里只做三件事：把文件送上去、把读到的行摆出来、用户点了确认才让后端入库。
+   预览拿到的全部行先存在 importRows 里，确认时原样回传；后端会重新校验一遍。 */
+let importRows = [];
+let importBusy = false;
+
+function openImport() {
+  importRows = [];
+  importBusy = false;
+  $("importMask").hidden = false;
+  $("importIntro").hidden = false;
+  $("importResult").hidden = true;
+  $("importSum").textContent = "";
+  $("importRows").innerHTML = "";
+  $("importMore").textContent = "";
+  $("importErr").textContent = "";
+  $("importConfirm").disabled = true;
+  $("importConfirm").textContent = "导入 0 条";
+  $("importFile").value = "";
+}
+
+function closeImport() {
+  $("importMask").hidden = true;
+  importRows = [];
+}
+
+/* 读失败：把错误留在弹窗里，退回「选文件」那一屏，别让人以为文件已经导进去了 */
+function importError(message) {
+  $("importErr").textContent = message;
+  $("importIntro").hidden = false;
+  $("importResult").hidden = true;
+  $("importConfirm").disabled = true;
+  $("importConfirm").textContent = "导入 0 条";
+}
+
+async function previewImport(file) {
+  if (!file || importBusy) return;
+  importBusy = true;
+  importRows = [];                    // 上一次预览的行不能留着，否则读失败时还挂着旧的
+  $("importErr").textContent = "";
+  $("importIntro").hidden = true;
+  $("importResult").hidden = false;
+  $("importSum").textContent = "正在读这份账单…";
+  $("importRows").innerHTML = "";
+  $("importMore").textContent = "";
+  $("importConfirm").disabled = true;
+  $("importConfirm").textContent = "导入 0 条";
+  try {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const r = await fetch("/api/import/preview", { method: "POST", body: form });
+    const d = await r.json();
+    if (!r.ok) { importError(detailMsg(d)); return; }
+    importRows = d.rows || [];
+    renderImportPreview(d);
+  } catch (err) {
+    importError("这份文件没读成：" + err.message);
+  } finally {
+    importBusy = false;
+  }
+}
+
+function renderImportPreview(d) {
+  // 摘要一行：谁家的账单、读出多少、跳过多少。用户最想先知道「读没读错」
+  const bits = [`<b>${esc(d.source_label || "账单")}</b>`, `读出 <b>${d.total}</b> 条`];
+  if (d.skipped_total) bits.push(`跳过 ${d.skipped_total} 条`);
+  if (d.duplicated) bits.push(`文件内重复 ${d.duplicated} 条`);
+  $("importSum").innerHTML = bits.join(" · ");
+
+  const rows = (d.rows || []).slice(0, 20);
+  $("importRows").innerHTML = rows.map((row) => {
+    const income = row.kind === "income";
+    return `<tr>
+      <td class="t">${esc(row.occurred_at)}</td>
+      <td>${esc(row.text)}</td>
+      <td>${esc(row.category || (income ? "收入" : "未分类"))}</td>
+      <td class="money${income ? " in" : ""}">${income ? "+" : "−"}¥${yuan(row.amount_cents)}</td>
+    </tr>`;
+  }).join("");
+
+  const more = [];
+  if (d.total > rows.length) {
+    more.push(`只显示前 ${rows.length} 条，点下面的按钮把 ${d.total} 条全部入库。`);
+  }
+  if (d.skipped_total) {
+    // 跳过的原因只列前三条，够说明「为什么少了几笔」就行
+    const reasons = (d.skipped || []).slice(0, 3).map((s) => `第 ${s.line} 行 ${s.reason}`);
+    more.push(`跳过的：${reasons.join("；")}${d.skipped_total > reasons.length ? "…" : ""}`);
+  }
+  $("importMore").textContent = more.join(" ");
+  $("importConfirm").disabled = !d.total;
+  $("importConfirm").textContent = `导入 ${d.total} 条`;
+}
+
+async function confirmImport() {
+  if (!importRows.length || importBusy) return;
+  importBusy = true;
+  $("importConfirm").disabled = true;
+  $("importConfirm").textContent = "正在导入…";
+  try {
+    const r = await fetch("/api/import/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows: importRows }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      $("importErr").textContent = "导入失败：" + detailMsg(d);
+      return;
+    }
+    closeImport();
+    // 新账的 id 最大，排在第一页最上面：先把列表翻回第 1 页，不然停在旧页会以为没导进去。
+    // shownPage 置空 = 静默回第一页，不让视口滚到列表（卡片那边刚刷新，要留在视野里）。
+    page = 0;
+    shownPage = null;
+    // 跳到看得见这批账的月份：有本月的账就回本月，否则去最新的那个月
+    const months = d.months || [];
+    viewMonth = months.includes(thisMonth())
+      ? thisMonth() : (months[months.length - 1] || thisMonth());
+    await load();
+    if (!$("pane-history").hidden) await loadOps();
+
+    const notes = [];
+    if (d.duplicated) notes.push(`跳过 ${d.duplicated} 条重复`);
+    if (d.skipped) notes.push(`跳过 ${d.skipped} 条不合格`);
+    const extra = notes.join("，");
+    toast(`导入 ${d.imported} 条账目`, true, extra);
+    hint(`已导入 <b>${d.imported}</b> 条${extra ? "，" + extra : ""}`);
+    waifuSay("账单收好啦，主人~");
+  } catch (err) {
+    $("importErr").textContent = "导入失败：" + err.message;
+  } finally {
+    importBusy = false;
+    $("importConfirm").disabled = !importRows.length;
+    $("importConfirm").textContent = importRows.length ? `导入 ${importRows.length} 条` : "导入 0 条";
+  }
+}
+
+$("importBtn").addEventListener("click", openImport);
+$("importPick").addEventListener("click", () => $("importFile").click());
+$("importCancel").addEventListener("click", () => { if (!importBusy) closeImport(); });
+$("importConfirm").addEventListener("click", confirmImport);
+$("importFile").addEventListener("change", (e) => {
+  previewImport(e.target.files[0]);
+  e.target.value = "";                // 同一个文件再选一次也要能触发 change
+});
+
+/* 拖拽：只认拖到那个框里的，别让整个页面变成投放区——拖到表格上会以为没反应 */
+const importDrop = $("importDrop");
+["dragenter", "dragover"].forEach((type) => {
+  importDrop.addEventListener(type, (e) => {
+    e.preventDefault();
+    importDrop.classList.add("over");
+  });
+});
+["dragleave", "drop"].forEach((type) => {
+  importDrop.addEventListener(type, (e) => {
+    e.preventDefault();
+    importDrop.classList.remove("over");
+  });
+});
+importDrop.addEventListener("drop", (e) => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) previewImport(file);
+});
+// 拖歪了别让浏览器直接把文件打开（会离开记账页，看着像崩了）
+["dragover", "drop"].forEach((type) => {
+  window.addEventListener(type, (e) => {
+    if (!$("importMask").hidden) e.preventDefault();
+  });
+});
+
+/* 点遮罩关窗：跟设置窗同一套「按下和松开都在遮罩上」的判断，免得拖选文字时误关 */
+let importDown = false;
+$("importMask").addEventListener("mousedown", (e) => {
+  importDown = e.target === $("importMask");
+});
+$("importMask").addEventListener("click", (e) => {
+  if (e.target === $("importMask") && importDown && !importBusy) closeImport();
+  importDown = false;
 });
 
 async function deleteTx(id) {
