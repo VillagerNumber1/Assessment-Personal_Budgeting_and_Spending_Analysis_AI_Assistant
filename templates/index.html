@@ -48,6 +48,9 @@
     --accent: #2f7cf6;      /* 实心底色，暗色下不变（上面压白字） */
     --accent-ink: #2f7cf6;  /* 强调色的**文字**形式，暗色下要提亮 */
     --accent-weak: #eef4ff; /* 强调色的浅底 */
+    /* 近 6 个月柱状图的柱子。这个变量以前一直被引用却从没定义过，
+       于是 background 整条失效、柱子透明——图上是空的（2026-11-27 修） */
+    --trend-bar: #b9d0ff;
 
     /* 状态色：**实心 / 浅底 / 文字** 三种用途分开，别混用。
        实心（--green）当按钮底色，浅底（--green-soft）当标签底，文字（--green-ink）当字色。
@@ -462,6 +465,7 @@
     --accent: #2f7cf6;        /* 实心底：保持原蓝，上面压白字够对比 */
     --accent-ink: #7fb0ff;    /* 蓝色文字：提亮，否则在深底上发闷 */
     --accent-weak: #1f2c40;
+    --trend-bar: #3b5a8c;     /* 柱状图：比卡片底亮，又不抢数字的戏 */
 
     --green: #16a34a;  --green-soft: #1e3527;  --green-ink: #6fcf97;
     --red: #e5484d;    --red-soft: #3a2225;    --red-ink: #f08a8d;   --red-line: #6b3a3d;
@@ -684,7 +688,7 @@
   </div>
 
   <!-- 记账框：DeepSeek 那种「上输入、下工具栏」的聊天框。
-       左下角回形针（账单 CSV，图片留给以后的 OCR）+ 麦克风，右下角向上箭头提交。
+       左下角回形针（账单 CSV 走导入、图片走小票 OCR）+ 麦克风，右下角向上箭头提交。
        回车 = 提交，Shift+回车 = 换行（跟聊天框的习惯一致）。 -->
   <form class="composer" id="form">
     <textarea id="text" rows="1" placeholder="记账：比如「昨天打车32」"
@@ -692,7 +696,7 @@
     <div class="composer-tools">
       <div class="tools-left">
         <input id="attachFile" type="file" accept=".csv,.txt,image/*" hidden>
-        <button type="button" class="tool-btn" id="attachBtn" title="附加文件：账单 CSV（图片 OCR 在下一步）">
+        <button type="button" class="tool-btn" id="attachBtn" title="附加文件：账单 CSV，或小票截图">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="m20.4 11.6-8.6 8.6a5.6 5.6 0 0 1-7.9-7.9l8-8a3.7 3.7 0 0 1 5.3 5.3
@@ -1651,7 +1655,44 @@ const detailMsg = (d) => (d && typeof d.detail === "object")
   ? (d.detail.message || "未知错误") : (d.detail || "未知错误");
 const isTooLarge = (d) => !!d && typeof d.detail === "object" && d.detail.code === "amount_too_large";
 
+/* ---------- 账单处理队列 ----------
+   写操作（记账 / 语音 / OCR）按进来的顺序一件件做，查账排在所有写操作后面。
+   为什么要排队：手打、语音、贴图可能同时进来，两个流程各自弹窗、各自刷新，
+   弹窗会叠在一起、列表刷两遍。串起来之后「一次只做一件」，弹窗不会被顶掉。
+   注意这是**有意阻塞**的：前一件在等用户点确认，后面的就老老实实等着。 */
+const jobQueue = [];
+let jobRunning = false;
+
+function enqueue(job, priority = 0) {
+  return new Promise((resolve, reject) => {
+    jobQueue.push({ job, priority, resolve, reject });
+    pumpQueue();
+  });
+}
+
+async function pumpQueue() {
+  if (jobRunning) return;
+  jobRunning = true;
+  try {
+    while (jobQueue.length) {
+      jobQueue.sort((a, b) => a.priority - b.priority);   // 同优先级保持进来的顺序
+      const item = jobQueue.shift();
+      try {
+        item.resolve(await item.job());
+      } catch (err) {
+        item.reject(err);
+      }
+    }
+  } finally {
+    jobRunning = false;
+  }
+}
+
 async function create(text) {
+  return enqueue(() => createNow(text), 0);
+}
+
+async function createNow(text) {
   let confirmLarge = false;
   for (;;) {
     const r = await fetch("/api/transactions", {
@@ -1791,6 +1832,11 @@ const METRIC_LABEL = { sum: "合计", count: "笔数", avg: "平均", balance: "
 const GROUP_LABEL = { category: "类别", month: "月份", none: "" };
 
 async function askQuery(q) {
+  // 查账排最后：前面还有没做完的写入时，先让它们落地，再回答
+  return enqueue(() => askQueryNow(q), 1);
+}
+
+async function askQueryNow(q) {
   $("qtext").value = q;
   $("qresult").hidden = false;
   scrollToSearch();                 // 答案在顶部就滚回顶部，人可能还在底部的记账框
@@ -1835,10 +1881,33 @@ async function askQuery(q) {
       + (d.source === "llm" ? " · 模型兜底" : "");
     logQuery(q);                     // 记进「设置 → 历史记录」，可以重查
     waifuSay(d.answer);              // 注意是 d.answer；s 是 DSL，没有 answer
+    // 把流水翻到「问题里说的那几笔账」那一页。不 await：答案已经出来了，
+    // 定位再慢也不该把这句话卡住。
+    jumpToLedger(s).catch(() => {});
   } catch (err) {
     $("qanswer").style.color = "#e5484d";
     $("qanswer").textContent = "请求失败：" + err.message;
   }
+}
+
+/* 查完账把流水翻到对应页。
+   列表是按录入顺序（id 倒序）排的，不是按记账日期，所以「第几页」得由后端数：
+   区间里最新那笔前面有多少条，就是它的位置。
+   问的是具体某一天才把视口滚过去；问一个月就让答案留在屏幕上，别把人拽走。 */
+async function jumpToLedger(dsl) {
+  if (!dsl || !dsl.start || !dsl.end) return;
+  const r = await fetch("/api/transactions/locate?start=" + encodeURIComponent(dsl.start)
+    + "&end=" + encodeURIComponent(dsl.end));
+  const d = await r.json();
+  if (!r.ok || d.offset == null) return;
+
+  viewMonth = d.month || viewMonth;     // 卡片和统计也跟着问题走
+  page = Math.floor(d.offset / PAGE_SIZE);
+  shownPage = null;                     // 静默翻页，别和「翻页」动画混在一起
+  await load();
+  const pages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  $("qdsl").textContent += ` · 已跳到第 ${page + 1}/${pages} 页`;
+  if (dsl.start === dsl.end) scrollToList();   // 问的是哪天，就带人去看那天
 }
 
 /* 查账历史存服务端：换浏览器、换设备都能看到，也能在历史记录里删掉。
@@ -1912,8 +1981,12 @@ function openDraft(draft) {
   editingId = null;                        // null = 新建
   $("editTitle").textContent = "补一笔账";
   $("editNotice").hidden = false;
+  // 默认是「没听出金额」；AA 除不尽时会换成一句说明，并先把近似金额填好
+  $("editNotice").textContent = draft.note
+    ? "*" + draft.note + "，确认后再入库。"
+    : "*无法确认本笔账单情况，请检查后再入库。";
   $("editText").value = draft.text || "";
-  $("editAmount").value = "";              // 就这一个空着
+  $("editAmount").value = draft.amount_cents ? (draft.amount_cents / 100).toFixed(2) : "";
   const when = String(draft.occurred || todayStr());
   $("editDate").value = when.slice(0, 10);
   $("editTime").value = when.length > 10 ? when.slice(11, 16) : "";
@@ -2608,19 +2681,109 @@ importDrop.addEventListener("drop", (e) => {
 });
 
 /* ---------- 聊天框左下角的回形针 ----------
-   一个入口管两种文件：账单表格进导入流程，图片留给 OCR。
-   OCR 还没接，所以图片要明说「还没做」——点完什么都不发生，比报错更让人困惑。 */
+   一个入口管两种文件：账单表格进导入，图片进小票 OCR。
+   两条路都只**读**，入库前都要用户在编辑框里点一次保存。 */
 function routeAttachedFile(file) {
   if (!file) return;
   const name = (file.name || "").toLowerCase();
   if (/\.(csv|txt)$/.test(name)) { openImport(file); return; }
   if (/^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/.test(name)) {
-    toast("图片 OCR 还没接上", false, "这次先导账单 CSV；小票那条在下一步");
-    hint("图片 OCR 还没做，先手动记一笔，或者选一份账单 CSV", true);
-    $("text").focus();
+    readReceipt(file).catch(() => {});
     return;
   }
-  toast("这个文件不认识", false, "只认 .csv / .txt 账单");
+  toast("这个文件不认识", false, "只认 .csv / .txt 账单，或者小票图片");
+}
+
+/* 图片 -> 草稿。识别期间先说一声「在读」，失败说清原因（没 key / 图里没金额 / 接口挂了） */
+async function readReceipt(file) {
+  return enqueue(() => readReceiptNow(file), 0);
+}
+
+async function readReceiptNow(file) {
+  if (!file) return null;
+  // 上传前先缩一下：手机原图动辄 4000px，接口有单边上限，而且大图更慢更贵
+  try {
+    file = await shrinkImage(file);
+  } catch (err) {
+    hint(err.message, true);
+    return null;
+  }
+  hint("正在读这张小票…（要等一两秒）");
+  const form = new FormData();
+  form.append("file", file, file.name);
+  try {
+    const r = await fetch("/api/receipt", { method: "POST", body: form });
+    const d = await r.json();
+    if (!r.ok) {
+      hint("这张图没读懂：" + detailMsg(d), true);
+      waifuSay("这张图我读不懂…");
+      return null;
+    }
+    openReceipt(d);
+    return d;
+  } catch (err) {
+    hint("这张图没读懂：" + err.message, true);
+    return null;
+  }
+}
+
+/* 图片预处理：
+   1. 整页账单截图（又长又窄）直接拦下——接口单边最多 8192px，缩完也读不清，
+      而且那本来就不是「一张小票」，该走 CSV 导入
+   2. 普通照片缩到长边 2000px 再传：识别效果基本不变，上传和计费都省 */
+function loadImageSize(file) {
+  // 用 <img> 而不是 createImageBitmap：后者在部分无头/老浏览器里不保证完成，
+  // 一旦不 resolve 整条 OCR 就一直等着，用户看到的是「正在读」永远不结束
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("图片解不开")); };
+    img.src = url;
+  });
+}
+
+async function shrinkImage(file, maxSide = 2000) {
+  if (!file || !/^image\//.test(file.type || "")) return file;
+  let img = null;
+  try {
+    img = await loadImageSize(file);
+  } catch (err) {
+    return file;                       // 解不开就原图上传，让后端去报错
+  }
+  if (img.naturalHeight > img.naturalWidth * 4 && img.naturalHeight > 4000) {
+    throw new Error("这是一整页账单截图（太长），OCR 只读单张小票。"
+      + "整页账单请点「导入」导 CSV");
+  }
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  if (scale >= 0.999) return file;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.88));
+  if (!blob) return file;
+  return new File([blob], "receipt.jpg", { type: "image/jpeg" });
+}
+
+/* OCR 的结果也走编辑框确认——跟「补一笔账」是同一件事：
+   从别处拿来一条不完整的账，让人看一眼再存。 */
+function openReceipt(d) {
+  editingId = null;
+  $("editTitle").textContent = "确认这张小票";
+  $("editNotice").hidden = false;
+  $("editNotice").textContent = "*从图片里读到的，对一下金额和日期再保存。";
+  $("editText").value = d.text || "";
+  $("editAmount").value = d.amount_cents ? (d.amount_cents / 100).toFixed(2) : "";
+  const when = String(d.occurred_at || todayStr());
+  $("editDate").value = when.slice(0, 10);
+  $("editTime").value = when.length > 10 ? when.slice(11, 16) : "";
+  $("editErr").textContent = "";
+  paintEditCount();
+  $("mask").hidden = false;
+  hint(`读到了：<b>${esc(d.text)}</b> · <b>¥${yuan(d.amount_cents)}</b>，确认一下再存`);
+  $("editAmount").focus();
+  $("editAmount").select();
 }
 
 $("attachBtn").addEventListener("click", () => $("attachFile").click());

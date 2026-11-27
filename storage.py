@@ -228,6 +228,28 @@ def tx_keys() -> set[tuple]:
         con.close()
 
 
+def locate_offset(start: str, end: str) -> int | None:
+    """某个区间里最新的一笔，在「按 id 倒序」的流水里排第几（0 = 第一页最上面）。
+
+    列表是按录入顺序排的，不是按记账日期，所以「查完账跳到那几笔」得先数出
+    比它新的有多少条，才知道在第几页。区间里一条都没有就返回 None。
+    """
+    con = _connect()
+    try:
+        row = con.execute(
+            "select max(id) as top from transactions"
+            " where deleted_at is null and occurred_at >= ? and occurred_at < ?",
+            (start, end)).fetchone()
+        if row is None or row["top"] is None:
+            return None
+        newer = con.execute(
+            "select count(*) as n from transactions where deleted_at is null and id > ?",
+            (row["top"],)).fetchone()
+        return int(newer["n"])
+    finally:
+        con.close()
+
+
 def update(tx_id: int, text: str, amount_cents: int | None,
            category: str | None = None, kind: str | None = None,
            occurred_at: str | None = None) -> bool:

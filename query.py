@@ -34,13 +34,34 @@ def _month_range(year: int, month: int) -> tuple[date, date]:
     return start, end
 
 
+def _one_day(year: int, month: int, day: int) -> date | None:
+    """拼一个日期，拼不出来（2 月 30 日）就返回 None。"""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _day_of_month(q: str) -> int | None:
+    """句子里写的是「25 日 / 25 号」的那一天。"""
+    m = re.search(r"(?<!\d)(\d{1,2})\s*[日号]", q)
+    return int(m.group(1)) if m else None
+
+
 def parse_time(q: str, today: date) -> tuple[date, date, str]:
     """认出时间范围。认不出就默认「这个月」。"""
     if "上个月" in q or "上月" in q:
         y, m = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+        # 「上个月 25 号」比「上个月」更具体：能定到天就定到天
+        one = _one_day(y, m, _day_of_month(q) or 0)
+        if one:
+            return one, one, f"上月{one.day}日"
         start, end = _month_range(y, m)
         return start, end, "上个月"
     if "本月" in q or "这个月" in q or "当月" in q:
+        one = _one_day(today.year, today.month, _day_of_month(q) or 0)
+        if one:
+            return one, one, f"{one.day}日"
         start, end = _month_range(today.year, today.month)
         return start, end, "这个月"
     if "去年" in q:
@@ -57,6 +78,28 @@ def parse_time(q: str, today: date) -> tuple[date, date, str]:
         if word in q:
             day = today - timedelta(days=offset)
             return day, day, word
+
+    # 「11月25日 / 11月25号」：年月日都写了，年份按今年算
+    m = re.search(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]", q)
+    if m:
+        month, day = int(m.group(1)), int(m.group(2))
+        try:
+            one = date(today.year, month, day)
+        except ValueError:
+            one = None
+        if one:
+            return one, one, f"{month}月{day}日"
+
+    # 只写了「25日 / 25号」：按**当年当月**算（用户 2026-11-26 定的规矩）
+    m = re.search(r"(?<!\d)(\d{1,2})\s*[日号]", q)
+    if m:
+        day = int(m.group(1))
+        try:
+            one = date(today.year, today.month, day)
+        except ValueError:
+            one = None
+        if one:
+            return one, one, f"{day}日"
 
     m = re.search(r"(\d{1,2})\s*月份?", q)
     if m:
@@ -146,7 +189,7 @@ def parse_question(q: str, today: date | None = None) -> dict:
     return {**base, "start": start.isoformat(), "end": end.isoformat(), "label": label}
 
 
-def _end_exclusive(end: str) -> str:
+def end_exclusive(end: str) -> str:
     """区间右边界，**不含**。
 
     只给到天的（`2026-11-23`）→ 次日 00:00，这样当天带时分的账也能被包含；
@@ -160,7 +203,7 @@ def _end_exclusive(end: str) -> str:
 
 def run(dsl: dict) -> list[dict]:
     """按 DSL 查库。SQL 全部由代码拼，参数绑定，用户输入不进 SQL。"""
-    lo, hi = dsl["start"], _end_exclusive(dsl["end"])
+    lo, hi = dsl["start"], end_exclusive(dsl["end"])
 
     # 结余 = 收入 − 支出，两种方向都要算，所以不套用 kind 过滤
     if dsl["metric"] == "balance":

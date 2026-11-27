@@ -26,6 +26,7 @@ import importer
 import llm
 import parser
 import query
+import receipt
 import settings as runtime
 import storage
 from config import DATA_DIR, DEEPSEEK_API_KEY
@@ -457,6 +458,21 @@ def list_transactions(limit: int = 10, offset: int = 0) -> dict:
     }
 
 
+@app.get("/api/transactions/locate")
+def locate_transaction(start: str, end: str) -> dict:
+    """「这段账在流水第几页」：返回它前面有多少条。
+
+    查账问的是日期，流水排的是录入顺序，两边对不上——所以由后端数一下位置，
+    前端把列表翻到那一页（详见 storage.locate_offset 的注释）。
+    """
+    lo = check_occurred_at(start)
+    hi = check_occurred_at(end)
+    if lo is None or hi is None:
+        raise HTTPException(status_code=400, detail="start / end 要写 2026-11-25 这种日期")
+    offset = storage.locate_offset(lo, query.end_exclusive(hi))
+    return {"ok": True, "offset": offset, "month": lo[:7]}
+
+
 def _model_date(value) -> str | None:
     """模型给的日期：格式不对、或者根本不是个真实日期，就当没给。
 
@@ -523,9 +539,27 @@ def _resolve(text: str, fallback: NewTransaction, budget: list[int]) -> dict:
                 time_part = got
 
     occurred = date_part + (" " + time_part if time_part else "")
+
+    # AA：金额按句子里说的人数平摊。
+    # 除得尽就直接改；除不尽时 amount 先填「每人约多少」，并打上 aa_confirm，
+    # 由 create() 走「弹编辑框让你确认」那条路——不替你四舍五入。
+    aa_count = p["aa_count"]
+    aa_confirm = False
+    aa_note = ""
+    if aa_count and amount is not None:
+        total = amount
+        if total % aa_count == 0:
+            amount = total // aa_count
+        else:
+            amount = round(total / aa_count)
+            aa_confirm = True
+            aa_note = (f"{storage.yuan(total)} 元按 {aa_count} 人 AA 除不尽，"
+                       f"每人约 {storage.yuan(amount)} 元，核对一下具体金额")
+
     return {"text": text, "amount": amount, "occurred": occurred,
             "category": category, "kind": kind, "vague": p["vague_date"],
-            "hits": p["hits"], "llm": used_llm}
+            "hits": p["hits"], "llm": used_llm,
+            "aa_count": aa_count, "aa_confirm": aa_confirm, "aa_note": aa_note}
 
 
 def _pack(item: dict, new_id: int) -> dict:
@@ -539,8 +573,17 @@ def _pack(item: dict, new_id: int) -> dict:
             "kind": item["kind"],
             "hits": item["hits"],
             "llm": item["llm"],
+            "aa_count": item.get("aa_count"),
         },
     }
+
+
+def _aa_draft(item: dict) -> dict:
+    """AA 除不尽时的草稿：复用「补一笔账」那个编辑框，金额先填个近似值。"""
+    return {"ok": True, "need_amount": True, "draft": {
+        "text": item["text"], "occurred": item["occurred"],
+        "category": item["category"], "kind": item["kind"], "llm": item["llm"],
+        "amount_cents": item["amount"], "note": item["aa_note"]}}
 
 
 def check_vague_date(item: dict, given: str | None) -> None:
@@ -595,6 +638,11 @@ def create_transaction(tx: NewTransaction) -> dict:
             resolved[-1]["text"] = merged[:MAX_TEXT_LEN]
 
         if resolved:
+            # AA 除不尽：这一批先一条都不写，让用户把那一笔的金额确认了再说。
+            # （校验完再统一写库的理由见上面：不能出现「400 但已经存了一半」）
+            pending = next((it for it in resolved if it["aa_confirm"]), None)
+            if pending is not None:
+                return _aa_draft(pending)
             items = []
             for item in resolved:
                 try:
@@ -625,6 +673,9 @@ def create_transaction(tx: NewTransaction) -> dict:
                 "llm": item["llm"],
             },
         }
+    # AA 除不尽：同样弹编辑框，金额先填每人约多少
+    if item["aa_confirm"]:
+        return _aa_draft(item)
     check_amount(item["amount"], tx.confirm_large)
     try:
         new_id = storage.add(item["text"], item["amount"], item["occurred"],
@@ -762,6 +813,41 @@ async def transcribe(file: UploadFile = File(...)) -> dict:
         path.unlink(missing_ok=True)      # 语音是隐私，转完即删
 
     return {"ok": True, "text": text}
+
+
+# ---------- 小票 OCR ----------
+# 跟导入一样：只读、只回草稿，入库仍要走用户点一次「保存」。
+
+@app.post("/api/receipt")
+async def read_receipt(file: UploadFile = File(...)) -> dict:
+    """上传一张小票 / 支付截图，读成一条账目草稿。**不写库**。"""
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in receipt.SUFFIX_MIME:
+        raise HTTPException(status_code=400, detail="只认 png / jpg / webp / gif 的图片")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="图片是空的")
+    if len(raw) > receipt.MAX_BYTES:
+        raise HTTPException(status_code=400, detail="图片太大了（上限 8 MB）")
+
+    draft = receipt.read_image(raw, suffix, current_key())
+    if draft is None:
+        # 读不懂就把原因原样给用户：是没 key、接口挂了、还是图里真没有金额
+        raise HTTPException(status_code=400, detail=receipt.LAST_ERROR or "这张图没读懂")
+
+    occurred = draft["date"] or date.today().isoformat()
+    if draft["time"]:
+        occurred += " " + draft["time"]
+    return {
+        "ok": True,
+        "text": draft["text"],
+        "amount_cents": draft["amount_cents"],
+        "occurred_at": occurred,
+        "category": parser.find_category(draft["text"])[0],
+        "kind": "expense",              # 小票默认是花钱；方向要改去编辑框里改文字
+        "merchant": draft["merchant"],
+        "items": draft["items"],
+    }
 
 
 # ---------- 账单导入 ----------

@@ -221,6 +221,29 @@ def find_category(text: str) -> tuple[str | None, str]:
     return None, ""
 
 
+# 「AA」：把总价平摊给几个人。「四个舍友AA」「4个人平摊」「和 3 个朋友 AA」都认。
+# 人数取句子里写出来的那个数——「四个舍友」按 4 人算，不自动加「我」。
+# 这条规则是保守的：宁可按字面算，也别替用户猜「含不含自己」。
+AA_COUNT_RE = re.compile(
+    r"(?P<n>\d{1,2}|[一二两三四五六七八九十]{1,3})\s*"
+    r"(?:个|位|人)?\s*"
+    r"(?:舍友|室友|同学|朋友|人|个人)?\s*"
+    r"(?:一起|一块)?\s*"
+    r"(?:aa|AA|Aa|平摊|均摊|平分)"
+)
+
+
+def find_aa_count(text: str) -> int | None:
+    """认「几个人 AA」。认不出、或者只有 1 个人，返回 None。"""
+    m = AA_COUNT_RE.search(text)
+    if not m:
+        return None
+    raw = m.group("n")
+    count = int(raw) if raw.isdigit() else cn_to_int(raw)
+    # 个人账单里 50 人以上的「AA」多半是键盘上的 AA 两个字母
+    return count if 2 <= count <= 50 else None
+
+
 def find_kind(text: str) -> tuple[str, str]:
     """判断这笔记的是支出还是收入，返回 (kind, 命中的词)。"""
     for word in INCOME_WORDS:
@@ -246,6 +269,7 @@ def parse(text: str, today: date | None = None) -> dict:
                         if hm else occurred.isoformat()),
         "category": category,
         "kind": kind,
+        "aa_count": find_aa_count(text),      # 「4 个人 AA」= 4，认不出就是 None
         "date_hit": has_date_word(text),      # 日期是读到的还是兜底到今天
         "time_hit": hm is not None,           # 时间读到了没有
         "vague_date": find_vague_date(text),
