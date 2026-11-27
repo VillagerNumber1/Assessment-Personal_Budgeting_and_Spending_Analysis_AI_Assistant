@@ -39,9 +39,9 @@ BACKGROUND_DIR = DATA_DIR / "backgrounds"
 BG_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 BG_MAX_BYTES = 8 * 1024 * 1024
 
-# 账单导入：只收文本表格，上限跟背景图一致——200 行的账单通常不到 200 KB。
+# 账单导入：只收文本表格和 Excel，上限跟背景图一致——200 行的账单通常不到 200 KB。
 # 行数上限直接用解析层那个数，别在两处各写一个 5000（迟早会只改一处）
-IMPORT_SUFFIXES = {".csv", ".txt"}
+IMPORT_SUFFIXES = {".csv", ".txt", ".xlsx", ".xlsm"}
 IMPORT_MAX_BYTES = 8 * 1024 * 1024
 IMPORT_MAX_ROWS = importer.MAX_ROWS
 
@@ -858,8 +858,11 @@ async def read_receipt(file: UploadFile = File(...)) -> dict:
 async def import_preview(file: UploadFile = File(...)) -> dict:
     """上传一份 CSV，只解析、不写库。返回全部行（前端只展示前 20 条）。"""
     suffix = Path(file.filename or "").suffix.lower()
+    if suffix == ".xls":
+        raise HTTPException(status_code=400,
+                            detail="老的 .xls 读不了，用 Excel 另存为 .xlsx 或 CSV 再导")
     if suffix not in IMPORT_SUFFIXES:
-        raise HTTPException(status_code=400, detail="只认 .csv / .txt 文件")
+        raise HTTPException(status_code=400, detail="只认 .csv / .txt / .xlsx 文件")
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="文件是空的")
@@ -867,7 +870,7 @@ async def import_preview(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=400, detail="文件太大了（上限 8 MB）")
 
     try:
-        parsed = importer.parse_bytes(raw)
+        parsed = importer.parse_bytes(raw, file.filename or "")
     except importer.ImportParseError as exc:
         # 解析层抛的是给人看的一句话，原样透给前端
         raise HTTPException(status_code=400, detail=str(exc)) from exc

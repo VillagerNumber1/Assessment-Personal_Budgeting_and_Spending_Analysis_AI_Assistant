@@ -24,8 +24,12 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime
+import re
+import zipfile
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import parser as rules
 
@@ -90,13 +94,22 @@ _SOURCE_LABEL = {
 }
 
 
-def parse_bytes(raw: bytes) -> dict:
-    """整份文件 -> 解析结果。读不了就抛 ImportParseError（消息能直接给用户看）。"""
+def parse_bytes(raw: bytes, filename: str = "") -> dict:
+    """整份文件 -> 解析结果。读不了就抛 ImportParseError（消息能直接给用户看）。
+
+    filename 只看后缀：`.xlsx` / `.xlsm` 走 Excel 那条路，其余按 CSV / TXT 解。
+    """
     if not raw:
         raise ImportParseError("文件是空的，没东西可导。")
 
-    text, encoding = _decode(raw)
-    rows = _read_rows(text)
+    suffix = Path(filename).suffix.lower()
+    sheet = ""
+    if suffix in (".xlsx", ".xlsm"):
+        rows, sheet = _read_xlsx(raw)
+        text, encoding = "", "xlsx"
+    else:
+        text, encoding = _decode(raw)
+        rows = _read_rows(text)
     if not rows:
         raise ImportParseError("这个文件里一行都没有。")
 
@@ -141,6 +154,7 @@ def parse_bytes(raw: bytes) -> dict:
         "source": source,
         "source_label": _SOURCE_LABEL[source],
         "encoding": encoding,
+        "sheet": sheet,
         "header_row": header_index + 1,
         "rows": items,
         "total": len(items),
@@ -360,3 +374,235 @@ def _detect_source(text: str, header: list[str]) -> str:
     if "支付宝" in prefix:
         return "alipay"
     return "generic"
+
+
+# ---------------- Excel（.xlsx） ----------------
+# 为什么不用 openpyxl：xlsx 就是一个 zip 包着的 XML，而这里只需要「读单元格」这一件事。
+# 自己解不到 150 行，省掉一个依赖（Docker 镜像也能小一点），跟「不引 python-dotenv」是一个思路。
+# 只读数值/文本/日期，不碰公式计算——读的是 Excel 存好的缓存值，公式单元格没有缓存值就当空。
+
+_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+# Excel 内置的日期/时间格式编号（14~22 是日期，45~47 是时间）
+_BUILTIN_DATE_FORMATS = {14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47}
+
+
+def _local(tag: str) -> str:
+    """去掉 XML 命名空间，只留标签名。"""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _read_xlsx(raw: bytes) -> tuple[list[list[str]], str]:
+    """xlsx -> 行列表 + 用的工作表名。有多个工作表时挑行数最多的那个。"""
+    try:
+        book = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile as exc:
+        raise ImportParseError(
+            "这个 Excel 打不开：可能是老的 .xls 格式，或者文件坏了。"
+            "用 Excel 另存为 .xlsx 或 CSV 再试。") from exc
+
+    with book:
+        try:
+            shared = _xlsx_shared_strings(book)
+            date_styles, date1904 = _xlsx_styles(book)
+            sheets = _xlsx_sheets(book)
+        except (KeyError, ET.ParseError) as exc:
+            raise ImportParseError("这个 Excel 结构看不懂，换一份再试。") from exc
+
+        best: tuple[str, list[list[str]]] | None = None
+        for name, path in sheets:
+            try:
+                rows = _xlsx_rows(book, path, shared, date_styles, date1904)
+            except (KeyError, ET.ParseError):
+                continue
+            if best is None or len(rows) > len(best[1]):
+                best = (name, rows)
+        if best is None:
+            raise ImportParseError("这个 Excel 里没有能读的工作表。")
+        return best[1], best[0]
+
+
+def _xlsx_sheets(book: zipfile.ZipFile) -> list[tuple[str, str]]:
+    """[(工作表名, 内部 XML 路径)]，按工作簿里的顺序。"""
+    names = set(book.namelist())
+    workbook = ET.fromstring(book.read("xl/workbook.xml"))
+
+    rels: dict[str, str] = {}
+    if "xl/_rels/workbook.xml.rels" in names:
+        for rel in ET.fromstring(book.read("xl/_rels/workbook.xml.rels")):
+            rels[rel.get("Id") or ""] = rel.get("Target") or ""
+
+    out: list[tuple[str, str]] = []
+    for sheet in workbook.iter():
+        if _local(sheet.tag) != "sheet":
+            continue
+        rid = ""
+        for key, value in sheet.attrib.items():
+            if _local(key) == "id":
+                rid = value
+                break
+        target = rels.get(rid, "")
+        if not target:
+            continue
+        if target.startswith("/"):
+            path = target.lstrip("/")
+        else:
+            path = "xl/" + target.lstrip("./")
+        if path not in names:
+            continue
+        out.append((sheet.get("name") or f"Sheet{len(out) + 1}", path))
+    if not out:                                   # 极简生成器可能没写 rels
+        out = [("Sheet1", "xl/worksheets/sheet1.xml")]
+    return out
+
+
+def _xlsx_shared_strings(book: zipfile.ZipFile) -> list[str]:
+    """共享字符串表。Excel 把重复出现的文字只存一份，单元格里存下标。"""
+    if "xl/sharedStrings.xml" not in book.namelist():
+        return []
+    root = ET.fromstring(book.read("xl/sharedStrings.xml"))
+    out: list[str] = []
+    for si in root:
+        if _local(si.tag) != "si":
+            continue
+        # 富文本会被拆成多个 <r><t>，拼起来才是完整一句话
+        out.append("".join(t.text or "" for t in si.iter() if _local(t.tag) == "t"))
+    return out
+
+
+def _xlsx_styles(book: zipfile.ZipFile) -> tuple[set[int], bool]:
+    """哪些单元格样式是「日期」，以及工作簿是不是 1904 日期系统。"""
+    date1904 = False
+    if "xl/workbook.xml" in book.namelist():
+        workbook = ET.fromstring(book.read("xl/workbook.xml"))
+        for node in workbook.iter():
+            if _local(node.tag) == "workbookPr":
+                date1904 = (node.get("date1904") or "").lower() in ("1", "true")
+
+    date_styles: set[int] = set()
+    if "xl/styles.xml" not in book.namelist():
+        return date_styles, date1904
+
+    root = ET.fromstring(book.read("xl/styles.xml"))
+    custom: dict[int, str] = {}
+    for node in root.iter():
+        if _local(node.tag) == "numFmt":
+            try:
+                custom[int(node.get("numFmtId") or 0)] = node.get("formatCode") or ""
+            except ValueError:
+                continue
+
+    for node in root.iter():
+        if _local(node.tag) != "cellXfs":
+            continue
+        for index, xf in enumerate(list(node)):
+            if _local(xf.tag) != "xf":
+                continue
+            try:
+                fmt = int(xf.get("numFmtId") or 0)
+            except ValueError:
+                fmt = 0
+            code = custom.get(fmt, "")
+            if fmt in _BUILTIN_DATE_FORMATS or (code and _looks_like_date(code)):
+                date_styles.add(index)
+        break
+    return date_styles, date1904
+
+
+def _looks_like_date(code: str) -> bool:
+    """格式串里有没有年月日/时分。先去掉引号里的字面量和 [...] 里的条件再判断。"""
+    text = re.sub(r'"[^"]*"', "", code)
+    text = re.sub(r"\[[^\]]*\]", "", text).lower()
+    return any(ch in text for ch in "yd") or ("h" in text and "m" in text)
+
+
+def _serial_to_datetime(serial: float, date1904: bool) -> datetime | None:
+    """Excel 的日期就是一个数：从 1899-12-30（1904 系统从 1904-01-01）起算的天数。"""
+    base = datetime(1904, 1, 1) if date1904 else datetime(1899, 12, 30)
+    try:
+        return base + timedelta(days=serial)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _xlsx_rows(book: zipfile.ZipFile, path: str,
+               shared: list[str], date_styles: set[int], date1904: bool) -> list[list[str]]:
+    root = ET.fromstring(book.read(path))
+    collected: list[tuple[int, dict[int, str]]] = []
+
+    for row in root.iter():
+        if _local(row.tag) != "row":
+            continue
+        try:
+            row_index = int(row.get("r") or len(collected) + 1)
+        except ValueError:
+            row_index = len(collected) + 1
+        cells: dict[int, str] = {}
+        for cell in row:
+            if _local(cell.tag) != "c":
+                continue
+            ref = cell.get("r") or ""
+            column = _column_index(ref) if ref else len(cells)
+            cells[column] = _xlsx_cell(cell, shared, date_styles, date1904)
+        if cells:
+            collected.append((row_index, cells))
+
+    collected.sort(key=lambda pair: pair[0])
+    rows: list[list[str]] = []
+    for _, cells in collected:
+        width = max(cells) + 1
+        rows.append([cells.get(i, "") for i in range(width)])
+    return rows
+
+
+def _column_index(ref: str) -> int:
+    """单元格坐标 A1 -> 0，B1 -> 1，AA1 -> 26。"""
+    letters = "".join(ch for ch in ref if ch.isalpha()).upper()
+    index = 0
+    for ch in letters:
+        index = index * 26 + (ord(ch) - 64)
+    return max(0, index - 1)
+
+
+def _xlsx_cell(cell, shared: list[str], date_styles: set[int], date1904: bool) -> str:
+    kind = cell.get("t") or ""
+
+    def child(tag: str):
+        return next((node for node in cell if _local(node.tag) == tag), None)
+
+    if kind == "inlineStr":
+        node = child("is")
+        return "".join(t.text or "" for t in node.iter() if _local(t.tag) == "t") if node is not None else ""
+
+    value = child("v")
+    if value is None or value.text is None:
+        return ""
+    raw = value.text
+
+    if kind == "s":                       # 共享字符串下标
+        try:
+            return shared[int(raw)]
+        except (ValueError, IndexError):
+            return ""
+    if kind == "b":                       # 布尔
+        return "TRUE" if raw.strip() in ("1", "true", "TRUE") else "FALSE"
+    if kind in ("str", "e"):              # 公式结果 / 错误值
+        return raw
+
+    try:
+        number = float(raw)
+    except ValueError:
+        return raw
+
+    try:
+        style = int(cell.get("s") or -1)
+    except ValueError:
+        style = -1
+    if style in date_styles:
+        moment = _serial_to_datetime(number, date1904)
+        if moment is not None:
+            if moment.hour or moment.minute:
+                return moment.strftime("%Y-%m-%d %H:%M")
+            return moment.strftime("%Y-%m-%d")
+
+    return str(int(number)) if number == int(number) else str(number)

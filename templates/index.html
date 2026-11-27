@@ -608,6 +608,19 @@
   .import-table td.t { white-space:nowrap; color:var(--muted); }
   .import-table td.money { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .import-table td.money.in { color:var(--green-ink); }
+  /* 勾选栏：筛选 + 批量按钮，账单两三百条时靠它省事 */
+  .import-tools { display:flex; align-items:center; gap:8px; margin:0 0 8px; flex-wrap:wrap; }
+  .import-tools input[type="search"] { flex:1; min-width:130px; padding:7px 10px; font-size:13px;
+                                       border:1px solid var(--line); border-radius:9px;
+                                       background:var(--field); color:var(--ink); outline:none; }
+  .import-tools input[type="search"]:focus { border-color:var(--accent); }
+  .import-actions { display:flex; gap:6px; }
+  .import-picked { font-size:12px; color:var(--muted); white-space:nowrap; margin-left:auto; }
+  .import-table th.ck, .import-table td.ck { width:26px; padding-right:0; text-align:center; }
+  .import-table th.ck input, .import-table td.ck input { cursor:pointer; accent-color:var(--accent); }
+  /* 没勾的行压淡：一眼能看出哪些会入库 */
+  .import-table tr.off td { opacity:.42; }
+  .import-empty { text-align:center; color:var(--muted); padding:18px 0; }
   .import-more { margin:8px 0 0; font-size:12px; color:var(--muted); line-height:1.6; }
 </style>
 </head>
@@ -695,7 +708,7 @@
               autocomplete="off" autofocus></textarea>
     <div class="composer-tools">
       <div class="tools-left">
-        <input id="attachFile" type="file" accept=".csv,.txt,image/*" hidden>
+        <input id="attachFile" type="file" accept=".csv,.txt,.xlsx,.xlsm,image/*" hidden>
         <button type="button" class="tool-btn" id="attachBtn" title="附加文件：账单 CSV，或小票截图">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -996,7 +1009,7 @@
       <p class="import-tip">微信、支付宝导出的 CSV 都能认，自己做的「时间 / 金额 / 收支 / 备注」表也行。
         先读一遍给你看，点确认才写进账本——读错了不用一条条删。</p>
       <div class="import-drop" id="importDrop">
-        <input id="importFile" type="file" accept=".csv,.txt,text/csv" hidden>
+        <input id="importFile" type="file" accept=".csv,.txt,.xlsx,.xlsm,text/csv" hidden>
         <button type="button" class="mini-btn" id="importPick">选择 CSV 文件</button>
         <p>或者把文件拖到这里</p>
       </div>
@@ -1004,10 +1017,23 @@
 
     <div id="importResult" hidden>
       <div class="import-sum" id="importSum"></div>
+      <!-- 先筛再勾：账单动辄两三百条，逐个点太慢 -->
+      <div class="import-tools">
+        <input id="importFilter" type="search" placeholder="筛选：商户 / 类别 / 金额"
+               autocomplete="off">
+        <div class="import-actions">
+          <button type="button" class="mini-btn" id="importAll">全选</button>
+          <button type="button" class="mini-btn" id="importInvert">反选</button>
+          <button type="button" class="mini-btn" id="importNone">取消选择</button>
+        </div>
+        <span class="import-picked" id="importPicked"></span>
+      </div>
       <div class="import-table-wrap">
         <table class="import-table">
           <thead>
             <tr>
+              <th class="ck"><input type="checkbox" id="importHead"
+                                    title="全选 / 取消（只作用于筛选出来的行）"></th>
               <th>时间</th><th>内容</th><th>类别</th>
               <th style="text-align:right">金额</th>
             </tr>
@@ -2516,6 +2542,8 @@ $("live2dSwitch").addEventListener("click", async () => {
    预览拿到的全部行先存在 importRows 里，确认时原样回传；后端会重新校验一遍。 */
 let importRows = [];
 let importBusy = false;
+let importPicked = new Set();        // 勾中的行（按下标），默认全选
+let importFilter = "";               // 筛选框当前内容
 
 function openImport(file) {
   blurComposer();
@@ -2531,6 +2559,10 @@ function openImport(file) {
   $("importConfirm").disabled = true;
   $("importConfirm").textContent = "导入 0 条";
   $("importFile").value = "";
+  importPicked = new Set();
+  importFilter = "";
+  $("importFilter").value = "";
+  $("importPicked").textContent = "";
   // 从回形针 / 拖拽进来时，文件已经选好了，直接开始读，省得再点一次「选择文件」
   if (file) previewImport(file);
 }
@@ -2538,6 +2570,7 @@ function openImport(file) {
 function closeImport() {
   $("importMask").hidden = true;
   importRows = [];
+  importPicked = new Set();
 }
 
 /* 读失败：把错误留在弹窗里，退回「选文件」那一屏，别让人以为文件已经导进去了 */
@@ -2553,6 +2586,7 @@ async function previewImport(file) {
   if (!file || importBusy) return;
   importBusy = true;
   importRows = [];                    // 上一次预览的行不能留着，否则读失败时还挂着旧的
+  importPicked = new Set();
   $("importErr").textContent = "";
   $("importIntro").hidden = true;
   $("importResult").hidden = false;
@@ -2568,6 +2602,7 @@ async function previewImport(file) {
     const d = await r.json();
     if (!r.ok) { importError(detailMsg(d)); return; }
     importRows = d.rows || [];
+    importPicked = new Set(importRows.map((_, index) => index));   // 默认全选
     renderImportPreview(d);
   } catch (err) {
     importError("这份文件没读成：" + err.message);
@@ -2581,35 +2616,113 @@ function renderImportPreview(d) {
   const bits = [`<b>${esc(d.source_label || "账单")}</b>`, `读出 <b>${d.total}</b> 条`];
   if (d.skipped_total) bits.push(`跳过 ${d.skipped_total} 条`);
   if (d.duplicated) bits.push(`文件内重复 ${d.duplicated} 条`);
+  if (d.sheet) bits.push(`工作表「${esc(d.sheet)}」`);
   $("importSum").innerHTML = bits.join(" · ");
 
-  const rows = (d.rows || []).slice(0, 20);
-  $("importRows").innerHTML = rows.map((row) => {
-    const income = row.kind === "income";
-    return `<tr>
-      <td class="t">${esc(row.occurred_at)}</td>
-      <td>${esc(row.text)}</td>
-      <td>${esc(row.category || (income ? "收入" : "未分类"))}</td>
-      <td class="money${income ? " in" : ""}">${income ? "+" : "−"}¥${yuan(row.amount_cents)}</td>
-    </tr>`;
-  }).join("");
-
   const more = [];
-  if (d.total > rows.length) {
-    more.push(`只显示前 ${rows.length} 条，点下面的按钮把 ${d.total} 条全部入库。`);
-  }
   if (d.skipped_total) {
     // 跳过的原因只列前三条，够说明「为什么少了几笔」就行
     const reasons = (d.skipped || []).slice(0, 3).map((s) => `第 ${s.line} 行 ${s.reason}`);
     more.push(`跳过的：${reasons.join("；")}${d.skipped_total > reasons.length ? "…" : ""}`);
   }
+  more.push("默认全选；取消勾选不想导的，或者用上面的筛选先缩小范围。");
   $("importMore").textContent = more.join(" ");
-  $("importConfirm").disabled = !d.total;
-  $("importConfirm").textContent = `导入 ${d.total} 条`;
+
+  renderImportRows();
 }
 
+/* 筛选：日期、商户、类别、收支、金额一起匹配，大小写不敏感。
+   「全选 / 反选」只作用在筛出来的行上——先筛「餐饮」再全选，就是只勾餐饮。 */
+function filteredImportRows() {
+  const q = importFilter.trim().toLowerCase();
+  const out = [];
+  importRows.forEach((row, index) => {
+    if (!q) { out.push({ row, index }); return; }
+    const hay = [
+      row.occurred_at, row.text, row.category || "",
+      row.kind === "income" ? "收入" : "支出",
+      yuan(row.amount_cents),
+    ].join(" ").toLowerCase();
+    if (hay.includes(q)) out.push({ row, index });
+  });
+  return out;
+}
+
+function renderImportRows() {
+  const list = filteredImportRows();
+  $("importRows").innerHTML = list.length
+    ? list.map(({ row, index }) => {
+        const income = row.kind === "income";
+        const on = importPicked.has(index);
+        return `<tr class="${on ? "" : "off"}" data-i="${index}">
+          <td class="ck"><input type="checkbox" data-i="${index}"
+                 ${on ? "checked" : ""} aria-label="选择这条"></td>
+          <td class="t">${esc(row.occurred_at)}</td>
+          <td>${esc(row.text)}</td>
+          <td>${esc(row.category || (income ? "收入" : "未分类"))}</td>
+          <td class="money${income ? " in" : ""}">${income ? "+" : "−"}¥${yuan(row.amount_cents)}</td>
+        </tr>`;
+      }).join("")
+    : `<tr><td colspan="5" class="import-empty">没有匹配的账目</td></tr>`;
+  paintImportPicked();
+}
+
+function paintImportPicked() {
+  const visible = filteredImportRows();
+  const checkedVisible = visible.filter(({ index }) => importPicked.has(index)).length;
+  $("importPicked").textContent = `已选 ${importPicked.size} / 共 ${importRows.length} 条`;
+  $("importConfirm").textContent = `导入 ${importPicked.size} 条`;
+  $("importConfirm").disabled = importPicked.size === 0;
+  const head = $("importHead");
+  head.checked = visible.length > 0 && checkedVisible === visible.length;
+  head.indeterminate = checkedVisible > 0 && checkedVisible < visible.length;
+}
+
+function pickVisibleRows(mode) {
+  const visible = filteredImportRows();
+  if (mode === "all") {
+    visible.forEach(({ index }) => importPicked.add(index));
+  } else if (mode === "invert") {
+    visible.forEach(({ index }) => {
+      if (importPicked.has(index)) importPicked.delete(index);
+      else importPicked.add(index);
+    });
+  } else {
+    importPicked.clear();              // 「取消选择」是清空全部，不只是屏幕上这些
+  }
+  renderImportRows();
+}
+
+$("importRows").addEventListener("change", (e) => {
+  const box = e.target.closest("input[type=checkbox]");
+  if (!box) return;
+  const index = Number(box.dataset.i);
+  if (box.checked) importPicked.add(index);
+  else importPicked.delete(index);
+  const tr = box.closest("tr");
+  if (tr) tr.classList.toggle("off", !box.checked);
+  paintImportPicked();                // 只改状态，不重画整张表（滚动位置能留住）
+});
+
+$("importFilter").addEventListener("input", () => {
+  importFilter = $("importFilter").value;
+  renderImportRows();
+});
+
+$("importAll").addEventListener("click", () => pickVisibleRows("all"));
+$("importInvert").addEventListener("click", () => pickVisibleRows("invert"));
+$("importNone").addEventListener("click", () => pickVisibleRows("none"));
+
+$("importHead").addEventListener("change", (e) => {
+  const visible = filteredImportRows();
+  if (e.target.checked) visible.forEach(({ index }) => importPicked.add(index));
+  else visible.forEach(({ index }) => importPicked.delete(index));
+  renderImportRows();
+});
+
 async function confirmImport() {
-  if (!importRows.length || importBusy) return;
+  const picked = importRows.filter((_, index) => importPicked.has(index));
+  if (!picked.length || importBusy) return;
   importBusy = true;
   $("importConfirm").disabled = true;
   $("importConfirm").textContent = "正在导入…";
@@ -2617,7 +2730,7 @@ async function confirmImport() {
     const r = await fetch("/api/import/commit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows: importRows }),
+      body: JSON.stringify({ rows: picked }),
     });
     const d = await r.json();
     if (!r.ok) {
@@ -2647,8 +2760,9 @@ async function confirmImport() {
     $("importErr").textContent = "导入失败：" + err.message;
   } finally {
     importBusy = false;
-    $("importConfirm").disabled = !importRows.length;
-    $("importConfirm").textContent = importRows.length ? `导入 ${importRows.length} 条` : "导入 0 条";
+    $("importConfirm").disabled = !importPicked.size;
+    $("importConfirm").textContent = importPicked.size
+      ? `导入 ${importPicked.size} 条` : "导入 0 条";
   }
 }
 
@@ -2686,7 +2800,7 @@ importDrop.addEventListener("drop", (e) => {
 function routeAttachedFile(file) {
   if (!file) return;
   const name = (file.name || "").toLowerCase();
-  if (/\.(csv|txt)$/.test(name)) { openImport(file); return; }
+  if (/\.(csv|txt|xlsx|xlsm)$/.test(name)) { openImport(file); return; }
   if (/^image\//.test(file.type) || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/.test(name)) {
     readReceipt(file).catch(() => {});
     return;
