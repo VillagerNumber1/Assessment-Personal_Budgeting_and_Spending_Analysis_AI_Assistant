@@ -967,7 +967,7 @@
             <p class="keyhint" id="keyHint">未配置</p>
             <ul class="feat">
               <li><span>LLM 自然语言识别</span><em id="llmState">规则版</em></li>
-              <li><span>OCR 图像识别</span><em class="off">未接入</em></li>
+              <li><span>OCR 图像识别</span><em id="ocrState" class="off">未接入</em></li>
               <li><span>语音识别</span><em id="asrState">—</em></li>
             </ul>
           </div>
@@ -2374,6 +2374,11 @@ function paintSettings(hasKey) {
   const ls = $("llmState");
   ls.textContent = hasKeyCache ? "规则 + 云端兜底" : "规则版";
   ls.className = hasKeyCache ? "" : "off";
+
+  // OCR 跟 LLM 共用同一个 key；有 key 就能用视觉接口（文案之前一直写着「未接入」，是漏改的）
+  const oc = $("ocrState");
+  oc.textContent = hasKeyCache ? "DeepSeek 视觉" : "缺少 API Key";
+  oc.className = hasKeyCache ? "" : "off";
 
   const kh = $("keyHint");
   kh.textContent = hasKeyCache ? "已配置 API Key" : "未配置";
