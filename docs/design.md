@@ -36,7 +36,8 @@ FastAPI（app.py，只做路由和校验）
 ├─ query.py     问题 → DSL → SQL（SQL 全部由代码拼，参数绑定）
 ├─ receipt.py   小票 / 截图 → 金额 / 商户 / 时间（视觉模型，只读不写库）
 ├─ importer.py  CSV / Excel → 账目草稿（认编码、找表头、去重）
-├─ asr.py       语音识别（本地 whisper / 云端二选一）
+├─ asr.py       语音识别（本地 faster-whisper / 云端二选一）
+├─ local_model.py 本地模型下载与管理（ModelScope，进度/续传）
 └─ storage.py   SQLite：建表、增删改查、统计、操作留痕
 ```
 
@@ -172,7 +173,7 @@ DeepSeek 的 OCR 工具接口（`/v1/tools/ocr`）能吃，但只回纯文本、
 ## 6. 怎么验证
 
 ```powershell
-# 单元测试（标准库 unittest，44 个用例，不碰真数据）
+# 单元测试（标准库 unittest，53 个用例，不碰真数据）
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
 # 起服务

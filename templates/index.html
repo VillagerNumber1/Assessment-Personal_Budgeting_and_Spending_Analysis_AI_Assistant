@@ -278,6 +278,32 @@
   .guide-p { margin:2px 0; font-size:12px; color:var(--muted); line-height:1.65; }
   .guide-p code { background:var(--fill); color:var(--ink-2); border-radius:6px;
                   padding:1px 5px; font-family:inherit; }
+
+  /* 没配 key 时的提醒条：能关，不挡操作 */
+  .key-banner { display:flex; align-items:center; gap:10px; margin:10px 0 0; padding:9px 12px;
+                border:1px solid #f0d9a8; background:#fff8e6; color:#8a6d3b; border-radius:10px;
+                font-size:12px; line-height:1.5; }
+  [data-theme="dark"] .key-banner { background:#3a2f1b; border-color:#5a4620; color:#e8c98a; }
+  .key-banner span { flex:1; }
+  .key-banner button { border:0; background:none; color:inherit; font:inherit; cursor:pointer;
+                       text-decoration:underline; white-space:nowrap; }
+  .key-banner .kb-close { text-decoration:none; font-size:16px; line-height:1; opacity:.7; }
+
+  /* 本地模型卡片：状态 + 进度条 + 下载/删除 */
+  .model-card { margin-top:12px; padding:12px 14px; border:1px solid var(--line-soft);
+                border-radius:12px; background:var(--fill); }
+  .model-head { display:flex; justify-content:space-between; align-items:baseline;
+                font-size:13px; color:var(--ink-2); }
+  .model-size { font-size:11px; color:var(--muted); }
+  .model-status { margin-top:6px; font-size:12px; color:var(--muted); line-height:1.5; }
+  .model-bar { height:6px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:8px; }
+  .model-bar span { display:block; height:100%; width:0; background:var(--accent); transition:width .25s; }
+  .model-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .mini-btn { border:1px solid var(--line); background:var(--card); color:var(--ink-2);
+              border-radius:8px; padding:5px 10px; font-size:12px; font-family:inherit; cursor:pointer; }
+  .mini-btn:hover { border-color:var(--accent); color:var(--accent-ink); }
+  .mini-btn[disabled] { opacity:.5; cursor:not-allowed; }
+  .model-note { margin:8px 0 0; font-size:11px; color:var(--muted); line-height:1.5; }
   /* 本月 vs 上月的结论：这是「提示」的数据版，看板娘关掉也照样显示 */
   .spend-note { font-size:12px; color:var(--muted); margin:-4px 0 10px; padding-left:0; }
   .spend-note.up { color:var(--amber-ink); }
@@ -677,6 +703,12 @@
     </div>
   </div>
 
+  <div class="key-banner" id="keyBanner" hidden>
+    <span>还没配置 API Key：语音和小票 OCR 用不了；记账、统计、查账、导入都照常。</span>
+    <button type="button" id="keyBannerGo">去配置</button>
+    <button type="button" class="kb-close" id="keyBannerClose" title="知道了">×</button>
+  </div>
+
   <div class="total-card">
     <div class="month-row">
       <button type="button" class="mon-nav" id="prevMonth" title="上个月">‹</button>
@@ -984,9 +1016,32 @@
           </div>
 
           <div class="sect" id="sectLocal" hidden>
-            <h3>① 本地模型</h3>
-            <p class="tip">*建议使用云端模型以取得最佳效果</p>
-            <p class="muted">orz... 正在施工中</p>
+            <h3>① 本地模型（faster-whisper）</h3>
+            <p class="tip">*不联网；效果和速度看机器，第一次识别要加载模型（几秒）。</p>
+
+            <div class="row-setting">
+              <div>
+                <div class="set-title">语音识别</div>
+                <div class="muted">faster-whisper（默认开）</div>
+              </div>
+              <button type="button" class="switch on" id="localAsrSwitch" aria-pressed="true"></button>
+            </div>
+
+            <div class="model-card">
+              <div class="model-head">
+                <b>faster-whisper-medium</b>
+                <span class="model-size" id="modelSize">约 1.46 GB</span>
+              </div>
+              <div class="model-status" id="modelStatus">正在查…</div>
+              <div class="model-bar" id="modelBar" hidden><span id="modelFill"></span></div>
+              <div class="model-actions">
+                <button type="button" class="mini-btn" id="modelDownload">下载模型</button>
+                <button type="button" class="mini-btn" id="modelCancel" hidden>取消</button>
+                <button type="button" class="mini-btn" id="modelRemove" hidden>删除模型</button>
+              </div>
+              <p class="model-note" id="modelNote">从 ModelScope 下载，约 1.5 GB，支持断点续传；
+                Docker 镜像不含 faster-whisper，本地识别只在这台机器上用。</p>
+            </div>
           </div>
 
           <div class="sect" id="sectCloud" hidden>
@@ -2378,6 +2433,7 @@ $("mic").addEventListener("click", async () => {
 /* ---------- 设置 ---------- */
 let asrSetting = "auto";
 let hasKeyCache = false;
+let localModelTimer = null;
 let keyHintCache = "";
 let hasUiKeyCache = false;      // 界面上（settings.json）配过 key，不含 .env 那份
 
@@ -2500,6 +2556,7 @@ function paintSettings(hasKey) {
   // 「重置」只在**界面上配过** key 时才出现：.env 里带来的那份清不掉，
   // 按钮摆在那儿按了也没变化，反而让人以为坏了
   $("keyReset").hidden = !hasUiKeyCache;
+  paintKeyBanner(hasKeyCache);
 }
 
 async function loadSettings() {
@@ -2519,6 +2576,89 @@ async function loadSettings() {
   applyTheme(d.theme || "auto");
   paintLive2d(d.live2d !== false);       // 装饰最后画，出错只影响它自己
   applyCardBg(d.has_background === true);
+}
+
+/* ---------- 没配 key 时的提醒条 ---------- */
+function paintKeyBanner(hasKey) {
+  const dismissed = localStorage.getItem("bill_key_banner_dismissed") === "1";
+  $("keyBanner").hidden = !!hasKey || dismissed;
+}
+
+/* ---------- 本地语音模型（ModelScope 下载） ---------- */
+function fmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(2) + " GB";
+  if (v >= 1024 ** 2) return (v / 1024 ** 2).toFixed(1) + " MB";
+  return Math.round(v / 1024) + " KB";
+}
+
+function startModelPoll() {
+  if (localModelTimer) return;
+  localModelTimer = setInterval(loadLocalModel, 1000);
+}
+
+function stopModelPoll() {
+  if (localModelTimer) { clearInterval(localModelTimer); localModelTimer = null; }
+}
+
+function paintLocalModel(d) {
+  const sw = $("localAsrSwitch");
+  const enabled = d.enabled !== false;
+  if ("enabled" in d) {                 // 有些接口只回进度，不回开关状态
+    sw.classList.toggle("on", enabled);
+    sw.setAttribute("aria-pressed", String(enabled));
+  }
+
+  const bar = $("modelBar"), fill = $("modelFill");
+  const dl = $("modelDownload"), cancel = $("modelCancel"), rm = $("modelRemove");
+  $("modelSize").textContent = d.size ? fmtBytes(d.size) : "约 1.46 GB";
+
+  if (!d.engine_available) {
+    $("modelStatus").textContent =
+      "当前环境没装 faster-whisper，本地识别用不了（Docker 镜像不含它）；本机装好后刷新页面即可。";
+    dl.disabled = true; cancel.hidden = true; rm.hidden = !d.model_ready;
+    bar.hidden = !d.running;
+    if (d.running) fill.style.width = (d.percent || 0) + "%";
+    return;
+  }
+
+  if (d.running) {
+    $("modelStatus").textContent =
+      `下载中 ${(d.percent || 0).toFixed(1)}% · ${fmtBytes(d.downloaded)} / ${fmtBytes(d.total)}` +
+      (d.file ? ` · ${d.file}` : "");
+    bar.hidden = false;
+    fill.style.width = (d.percent || 0) + "%";
+    dl.disabled = true; cancel.hidden = false; rm.hidden = true;
+    startModelPoll();
+    return;
+  }
+
+  stopModelPoll();
+  bar.hidden = true; fill.style.width = "0%";
+  dl.disabled = false;
+  dl.textContent = d.model_ready ? "重新下载" : (d.active_model ? "下载 medium" : "下载模型");
+  cancel.hidden = true; rm.hidden = !d.model_ready;
+  if (d.error) {
+    $("modelStatus").textContent = "上次没下完：" + d.error;
+  } else if (d.model_ready) {
+    $("modelStatus").textContent = "已就绪（faster-whisper-medium），本地识别可用。";
+  } else if (d.active_model) {
+    $("modelStatus").textContent =
+      `已就绪（${d.active_model}，${fmtBytes(d.active_size)}）；想要更准可以再下 medium。`;
+  } else {
+    $("modelStatus").textContent = "未下载。下载完就能不联网识别。";
+  }
+}
+
+async function loadLocalModel() {
+  try {
+    const r = await fetch("/api/asr/local");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    paintLocalModel(await r.json());
+  } catch (e) {
+    $("modelStatus").textContent = "查不到本地模型状态（服务没起？）";
+    stopModelPoll();
+  }
 }
 
 /* ---------- 卡片背景 ----------
@@ -3176,6 +3316,7 @@ $("settingsBtn").addEventListener("click", () => {
   blurComposer();
   $("settingsMask").hidden = false;
   loadSettings();
+  loadLocalModel();
 });
 $("settingsClose").addEventListener("click", () => { $("settingsMask").hidden = true; });
 
@@ -3220,6 +3361,7 @@ $("asrSeg").addEventListener("click", async (e) => {
   if (!btn) return;
   asrSetting = btn.dataset.v;
   paintSettings();                       // 先切界面，不等网络
+  if (asrSetting !== "cloud") loadLocalModel();
   try {
     const r = await fetch("/api/settings", {
       method: "POST",
@@ -3229,6 +3371,68 @@ $("asrSeg").addEventListener("click", async (e) => {
     const d = await r.json();
     if (r.ok) { asrSetting = d.asr_backend; paintSettings(d.has_key); }
   } catch (err) {}
+});
+
+/* ---------- 没配 key 的提醒 / 本地模型 ---------- */
+$("keyBannerClose").addEventListener("click", () => {
+  localStorage.setItem("bill_key_banner_dismissed", "1");
+  $("keyBanner").hidden = true;
+});
+
+$("keyBannerGo").addEventListener("click", () => {
+  openSettingsPane("model");
+  const cloud = document.querySelector('#asrSeg button[data-v="cloud"]');
+  if (cloud) cloud.click();        // key 在「云端模型」那一栏里
+});
+
+$("localAsrSwitch").addEventListener("click", async () => {
+  const next = !$("localAsrSwitch").classList.contains("on");
+  $("localAsrSwitch").classList.toggle("on", next);
+  $("localAsrSwitch").setAttribute("aria-pressed", String(next));
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ local_asr: next }),
+    });
+    if (!r.ok) throw new Error();
+  } catch (e) {
+    $("localAsrSwitch").classList.toggle("on", !next);
+    $("localAsrSwitch").setAttribute("aria-pressed", String(!next));
+    hint("这个开关没存上，再试一次", true);
+  }
+});
+
+$("modelDownload").addEventListener("click", async () => {
+  $("modelDownload").disabled = true;
+  $("modelStatus").textContent = "正在准备下载…";
+  try {
+    const r = await fetch("/api/asr/local/download", { method: "POST" });
+    const d = await r.json();
+    if (!r.ok) {
+      $("modelStatus").textContent = d.detail || "下载没启动";
+      $("modelDownload").disabled = false;
+      return;
+    }
+    paintLocalModel(d);
+  } catch (e) {
+    $("modelStatus").textContent = "下载没启动：" + e.message;
+    $("modelDownload").disabled = false;
+  }
+});
+
+$("modelCancel").addEventListener("click", async () => {
+  await fetch("/api/asr/local/cancel", { method: "POST" });
+  loadLocalModel();
+});
+
+$("modelRemove").addEventListener("click", async () => {
+  const yes = await askConfirm("删掉本地模型？下次用要重新下（约 1.5 GB）。", "删除模型", 0);
+  if (!yes) return;
+  const r = await fetch("/api/asr/local", { method: "DELETE" });
+  const d = await r.json();
+  if (!r.ok) { $("modelStatus").textContent = d.detail || "删除失败"; return; }
+  paintLocalModel(d);
 });
 
 $("keySave").addEventListener("click", async () => {

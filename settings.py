@@ -14,6 +14,7 @@ from config import ASR_BACKEND, DATA_DIR
 PATH = DATA_DIR / "settings.json"
 DEFAULTS = {
     "asr_backend": ASR_BACKEND,
+    "local_asr": True,       # 本地语音识别（faster-whisper）开关，默认开
     "live2d": True,          # 看板娘默认开（具体渲染见 HANDOFF_LIVE2D.md）
     "theme": "auto",         # light / dark / auto
     "background": "",        # 卡片背景图文件名；空 = 用默认渐变
@@ -47,6 +48,11 @@ def save(updates: dict) -> dict:
 def asr_backend() -> str:
     """语音识别走本地还是云端。"""
     return str(load().get("asr_backend") or "auto")
+
+
+def local_asr() -> bool:
+    """本地语音识别（faster-whisper）开关，默认开。"""
+    return bool(load().get("local_asr", True))
 
 
 def api_key() -> str:

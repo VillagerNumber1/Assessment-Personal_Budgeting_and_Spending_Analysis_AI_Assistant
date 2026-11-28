@@ -126,5 +126,24 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(loc["month"], "2026-11")
 
 
+class SettingsTest(unittest.TestCase):
+    def setUp(self):
+        helpers.fresh_db()
+
+    def test_local_asr_roundtrip(self):
+        self.assertTrue(app.read_settings()["local_asr"])      # 默认开
+        app.write_settings(app.SettingsBody(local_asr=False))
+        self.assertFalse(app.read_settings()["local_asr"])
+        app.write_settings(app.SettingsBody(local_asr=True))
+        self.assertTrue(app.read_settings()["local_asr"])
+
+    def test_local_model_status_shape(self):
+        d = app.asr_local_status()
+        for key in ("engine", "engine_available", "model_ready", "enabled",
+                    "percent", "size", "repo"):
+            self.assertIn(key, d)
+        self.assertEqual(d["engine"], "faster-whisper")
+
+
 if __name__ == "__main__":
     unittest.main()

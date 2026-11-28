@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from config import ASR_BACKEND, DEEPSEEK_API_KEY, MODEL_DIR, SAMPLE_RATE
+from config import ASR_BACKEND, DEEPSEEK_API_KEY, SAMPLE_RATE
 
 # whisper 的中文输出经常是繁体（小模型尤其明显），装了 opencc 就顺手转成简体。
 # 没装也不影响运行，只是可能拿到「計程車」这种结果。
@@ -47,19 +47,31 @@ class LocalWhisper(Transcriber):
 
     name = "本地 whisper"
 
-    def __init__(self, model_dir: Path = MODEL_DIR, compute_type: str = "int8") -> None:
+    def __init__(self, model_dir: Path | None = None, compute_type: str = "int8") -> None:
         self.model_dir = model_dir
         self.compute_type = compute_type
         self._model = None
 
+    def _resolve_dir(self) -> Path:
+        if self.model_dir is not None:
+            return self.model_dir
+        import local_model                       # 延迟 import，避免循环依赖
+        found = local_model.best_model_dir()
+        if found is None:
+            raise RuntimeError(
+                "还没有本地模型。打开「设置 → 模型 → 本地模型」点「下载模型」"
+                "（从 ModelScope 拉 faster-whisper-medium，约 1.5 GB）")
+        return found
+
     def load(self):
         if self._model is None:
-            from faster_whisper import WhisperModel   # 延迟 import，启动快一点
-            if not self.model_dir.exists():
-                raise FileNotFoundError(
-                    f"找不到模型目录：{self.model_dir.name}\n"
-                    "先运行：python download_model.py")
-            self._model = WhisperModel(str(self.model_dir),
+            try:
+                from faster_whisper import WhisperModel   # 延迟 import，启动快一点
+            except ImportError as exc:
+                raise RuntimeError(
+                    "当前环境没装 faster-whisper，本地识别用不了。"
+                    "Docker 镜像里没有它（容器里请用云端识别）；本机可以 pip install faster-whisper") from exc
+            self._model = WhisperModel(str(self._resolve_dir()),
                                        device="cpu", compute_type=self.compute_type)
         return self._model
 
@@ -127,18 +139,23 @@ class CloudASR(Transcriber):
 
 
 def create_transcriber(backend: str = ASR_BACKEND,
-                       api_key: str | None = None) -> Transcriber:
+                       api_key: str | None = None,
+                       local_enabled: bool = True) -> Transcriber:
     """按配置挑一个识别器，界面只需要调这个函数。
 
-    当前规则（暂定）：
-        有 key   → 云端；云端失败直接抛错，由界面弹窗并退出，**不静默回退**
-        没有 key → 本地 whisper
-
+    local_enabled 来自设置里的「本地语音识别」开关：
+        关掉之后，local 和「没 key 的 auto」都直接报错，提示去装/开云端。
     api_key 传 None 表示"用 .env 里的"；传具体值则优先用它（设置面板填的 key）。
     """
     key = api_key if api_key is not None else DEEPSEEK_API_KEY
     if backend == "local":
+        if not local_enabled:
+            raise RuntimeError("本地语音识别已关掉（设置 → 模型），可以切到云端或重新打开")
         return LocalWhisper()
     if backend == "cloud":
         return CloudASR(key)
-    return CloudASR(key) if key else LocalWhisper()
+    if key:
+        return CloudASR(key)
+    if not local_enabled:
+        raise RuntimeError("没有配置 API Key，本地语音识别又关着，语音暂时用不了")
+    return LocalWhisper()
