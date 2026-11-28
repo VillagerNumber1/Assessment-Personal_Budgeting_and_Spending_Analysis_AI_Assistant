@@ -193,13 +193,15 @@ def parse_question(q: str, today: date | None = None) -> dict:
 def end_exclusive(end: str) -> str:
     """区间右边界，**不含**。
 
-    只给到天的（`2026-11-23`）→ 次日 00:00，这样当天带时分的账也能被包含；
+    只给到天的（`2026-11-23`）→ 直接返回次日 `2026-11-24`。
+    不要拼成 `2026-11-24 00:00`：字符串比较里 `"2026-11-24" < "2026-11-24 00:00"`，
+    次日只记了日期的账会被算进今天的区间（这个坑是 tests/test_query.py 抓出来的）。
     已经给了时分的（`2026-11-23 23:00`）→ 原样用。
     用 `<` 而不是 `between`，否则「21点~23点」会把 23:00 那笔也算进来。
     """
     if len(end) > 10:
         return end
-    return (date.fromisoformat(end) + timedelta(days=1)).isoformat() + " 00:00"
+    return (date.fromisoformat(end) + timedelta(days=1)).isoformat()
 
 
 def run(dsl: dict) -> list[dict]:

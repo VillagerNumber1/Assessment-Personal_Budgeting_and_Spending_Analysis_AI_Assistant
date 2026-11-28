@@ -162,8 +162,9 @@
     [ ] 答辩 PPT —— 队友在做，见 HANDOFF_PPT.md
 
   工程与自检
-    [x] 测试进仓库 —— tests/ 下 5 个模块、32 个用例，标准库 unittest：
-        `python -m unittest discover -s tests -v`；不联网、不碰 data/app.db
+    [x] 测试进仓库 —— tests/ 下 6 个模块、44 个用例，标准库 unittest：
+        `python -m unittest discover -s tests -v`；不联网、不碰 data/app.db。
+        覆盖解析 / 查账 / 预算 / 导入 / OCR 校验 / 接口层校验
     [x] README 有截图 —— assets/ 下 3 张（主界面 / 导入勾选 / OCR 确认），
         用的是 samples/demo.csv 的演示数据
 

@@ -172,7 +172,7 @@ DeepSeek 的 OCR 工具接口（`/v1/tools/ocr`）能吃，但只回纯文本、
 ## 6. 怎么验证
 
 ```powershell
-# 单元测试（标准库 unittest，32 个用例，不碰真数据）
+# 单元测试（标准库 unittest，44 个用例，不碰真数据）
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 
 # 起服务

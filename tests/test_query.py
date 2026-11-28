@@ -41,6 +41,30 @@ class TimeRangeTest(unittest.TestCase):
         self.assertEqual((start, end), ("2026-11-01", "2026-11-30"))
 
 
+class QueryBoundaryTest(unittest.TestCase):
+    """区间右边界：查「某一天」不能把次日算进来。"""
+
+    def setUp(self):
+        import helpers
+        helpers.fresh_db()
+
+    def test_single_day_excludes_next_day_date_only(self):
+        import storage
+        storage.add("当天", 1000, "2026-11-01")
+        storage.add("次日", 2000, "2026-11-02")     # 只记到天，没有时分
+        dsl = query.parse_question("11月1日花了多少", today=date(2026, 11, 2))
+        rows = query.run(dsl)
+        self.assertEqual(rows[0]["count"], 1)
+        self.assertEqual(rows[0]["value"], 1000)
+
+    def test_same_day_with_time_is_included(self):
+        import storage
+        storage.add("当天晚些", 1000, "2026-11-01 23:30")
+        dsl = query.parse_question("11月1日花了多少", today=date(2026, 11, 2))
+        rows = query.run(dsl)
+        self.assertEqual(rows[0]["count"], 1)
+
+
 class ModelQueryValidationTest(unittest.TestCase):
     """模型给的结构一律当不可信输入。"""
 
