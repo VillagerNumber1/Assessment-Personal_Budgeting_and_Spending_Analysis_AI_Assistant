@@ -25,6 +25,7 @@ requirements.txt          本地开发依赖（锁版本）
 requirements-web.txt      Docker 用的精简依赖
 requirements.lock.txt     完整依赖快照（pip freeze）
 samples/demo.csv          演示用模拟账单（225 条，2026-09 ~ 2026-11）
+samples/receipt_demo.png  演示用小票图（合成，不含真实信息）
 .env.example              密钥模板
 ROADMAP.txt               冲刺计划与交付清单
 docs/design.md            方案设计、问题与解决、未完成的部分及原因
