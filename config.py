@@ -30,9 +30,6 @@ _load_env_file(BASE_DIR / ".env")
 # 密钥只从环境变量（或本地 .env）来，绝不写进代码、绝不提交
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
-# 语音识别走哪条路：local / cloud / auto
-ASR_BACKEND = os.environ.get("ASR_BACKEND", "auto").strip().lower()
-
 
 def save_env(updates: dict[str, str]) -> None:
     """把若干键写回 .env，保留其它行和注释。
@@ -60,9 +57,6 @@ def save_env(updates: dict[str, str]) -> None:
 # 数据目录：录音、以后的数据库都放这里（已 gitignore）
 DATA_DIR = BASE_DIR / "data"
 AUDIO_DIR = DATA_DIR / "recordings"
-
-# 模型目录：由 download_model.py 生成（已 gitignore）
-MODEL_DIR = BASE_DIR / "models" / "faster-whisper-small"
 
 SAMPLE_RATE = 16_000     # 录音采样率，也是 ASR 要求的采样率
 MAX_SECONDS = 60         # 一次录音最长多少秒

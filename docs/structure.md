@@ -11,8 +11,7 @@ parser.py                 规则解析：一句话 -> 金额 / 日期 / 时刻 /
 llm.py                    云端 LLM 兜底解析（规则拿不准时才调用）
 query.py                  自然语言查账：问题 -> DSL -> SQL -> 一句话
 storage.py                SQLite：建表、增改删、统计、操作历史、撤销
-asr.py                    语音识别：本地 whisper + DeepSeek 云端
-local_model.py            本地模型管理：ModelScope 下载 faster-whisper、进度、断点续传
+asr.py                    语音识别：只剩 DeepSeek 云端（本地模型已拆）
 settings.py               运行时设置（data/settings.json）
 audio_effectsRecovery.py  音效查找（有就播，没有就静音）
 config.py                 常量 + .env 读取

@@ -289,21 +289,6 @@
                        text-decoration:underline; white-space:nowrap; }
   .key-banner .kb-close { text-decoration:none; font-size:16px; line-height:1; opacity:.7; }
 
-  /* 本地模型卡片：状态 + 进度条 + 下载/删除 */
-  .model-card { margin-top:12px; padding:12px 14px; border:1px solid var(--line-soft);
-                border-radius:12px; background:var(--fill); }
-  .model-head { display:flex; justify-content:space-between; align-items:baseline;
-                font-size:13px; color:var(--ink-2); }
-  .model-size { font-size:11px; color:var(--muted); }
-  .model-status { margin-top:6px; font-size:12px; color:var(--muted); line-height:1.5; }
-  .model-bar { height:6px; border-radius:999px; background:var(--line); overflow:hidden; margin-top:8px; }
-  .model-bar span { display:block; height:100%; width:0; background:var(--accent); transition:width .25s; }
-  .model-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-  .mini-btn { border:1px solid var(--line); background:var(--card); color:var(--ink-2);
-              border-radius:8px; padding:5px 10px; font-size:12px; font-family:inherit; cursor:pointer; }
-  .mini-btn:hover { border-color:var(--accent); color:var(--accent-ink); }
-  .mini-btn[disabled] { opacity:.5; cursor:not-allowed; }
-  .model-note { margin:8px 0 0; font-size:11px; color:var(--muted); line-height:1.5; }
   /* 本月 vs 上月的结论：这是「提示」的数据版，看板娘关掉也照样显示 */
   .spend-note { font-size:12px; color:var(--muted); margin:-4px 0 10px; padding-left:0; }
   .spend-note.up { color:var(--amber-ink); }
@@ -1010,43 +995,10 @@
         </section>
 
         <section class="pane" id="pane-model" hidden>
-          <div class="seg" id="asrSeg">
-            <button type="button" data-v="local">本地模型</button>
-            <button type="button" data-v="cloud">云端模型</button>
-          </div>
-
-          <div class="sect" id="sectLocal" hidden>
-            <h3>① 本地模型（faster-whisper）</h3>
-            <p class="tip">*不联网；效果和速度看机器，第一次识别要加载模型（几秒）。</p>
-
-            <div class="row-setting">
-              <div>
-                <div class="set-title">语音识别</div>
-                <div class="muted">faster-whisper（默认开）</div>
-              </div>
-              <button type="button" class="switch on" id="localAsrSwitch" aria-pressed="true"></button>
-            </div>
-
-            <div class="model-card">
-              <div class="model-head">
-                <b>faster-whisper-medium</b>
-                <span class="model-size" id="modelSize">约 1.46 GB</span>
-              </div>
-              <div class="model-status" id="modelStatus">正在查…</div>
-              <div class="model-bar" id="modelBar" hidden><span id="modelFill"></span></div>
-              <div class="model-actions">
-                <button type="button" class="mini-btn" id="modelDownload">下载模型</button>
-                <button type="button" class="mini-btn" id="modelCancel" hidden>取消</button>
-                <button type="button" class="mini-btn" id="modelRemove" hidden>删除模型</button>
-              </div>
-              <p class="model-note" id="modelNote">从 ModelScope 下载，约 1.5 GB，支持断点续传；
-                Docker 镜像不含 faster-whisper，本地识别只在这台机器上用。</p>
-            </div>
-          </div>
-
-          <div class="sect" id="sectCloud" hidden>
-            <h3>② 云端模型（目前只支持 DeepSeek）</h3>
-            <label class="field" for="keyInput">API Key（三个云端功能共用）</label>
+          <div class="sect">
+            <h3>模型（DeepSeek 云端）</h3>
+            <p class="tip">*语音识别和小票 OCR 都用这个 key；没配也能记账、统计、查账、导入。</p>
+            <label class="field" for="keyInput">API Key</label>
             <div class="keyrow">
               <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off">
               <button type="button" id="keySave">保存</button>
@@ -2398,6 +2350,12 @@ async function stopRec() {
   for (const c of chunks) { merged.set(c, o); o += c.length; }
   chunks = [];
 
+  // 语音只有云端一条路：没配 key 就别上传了，直接说清楚（比等服务端报错快）
+  if (!hasKeyCache) {
+    hint("未配置 API Key：语音识别用不了，去「设置 → 模型」里填一个", true);
+    return;
+  }
+
   hint("识别中…");
   const form = new FormData();
   form.append("file", encodeWav(merged, rate), "rec.wav");
@@ -2431,9 +2389,7 @@ $("mic").addEventListener("click", async () => {
 });
 
 /* ---------- 设置 ---------- */
-let asrSetting = "auto";
 let hasKeyCache = false;
-let localModelTimer = null;
 let keyHintCache = "";
 let hasUiKeyCache = false;      // 界面上（settings.json）配过 key，不含 .env 那份
 
@@ -2528,13 +2484,6 @@ function budStep(kind, dir) {
 
 function paintSettings(hasKey) {
   if (hasKey !== undefined) hasKeyCache = !!hasKey;
-  const isCloud = asrSetting === "cloud" || (asrSetting === "auto" && hasKeyCache);
-
-  document.querySelectorAll("#asrSeg button").forEach((b) => {
-    b.classList.toggle("on", b.dataset.v === (isCloud ? "cloud" : "local"));
-  });
-  $("sectLocal").hidden = isCloud;
-  $("sectCloud").hidden = !isCloud;
 
   const st = $("asrState");
   st.textContent = hasKeyCache ? "DeepSeek 云端" : "缺少 API Key";
@@ -2567,7 +2516,6 @@ async function loadSettings() {
     paintSettings(false);
     return;
   }
-  asrSetting = d.asr_backend || "auto";
   keyHintCache = d.key_hint || "";
   hasUiKeyCache = d.has_ui_key === true;
   budDefaultCache = Math.max(0, Math.round(Number(d.monthly_budget) || 0));
@@ -2582,83 +2530,6 @@ async function loadSettings() {
 function paintKeyBanner(hasKey) {
   const dismissed = localStorage.getItem("bill_key_banner_dismissed") === "1";
   $("keyBanner").hidden = !!hasKey || dismissed;
-}
-
-/* ---------- 本地语音模型（ModelScope 下载） ---------- */
-function fmtBytes(n) {
-  const v = Number(n) || 0;
-  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(2) + " GB";
-  if (v >= 1024 ** 2) return (v / 1024 ** 2).toFixed(1) + " MB";
-  return Math.round(v / 1024) + " KB";
-}
-
-function startModelPoll() {
-  if (localModelTimer) return;
-  localModelTimer = setInterval(loadLocalModel, 1000);
-}
-
-function stopModelPoll() {
-  if (localModelTimer) { clearInterval(localModelTimer); localModelTimer = null; }
-}
-
-function paintLocalModel(d) {
-  const sw = $("localAsrSwitch");
-  const enabled = d.enabled !== false;
-  if ("enabled" in d) {                 // 有些接口只回进度，不回开关状态
-    sw.classList.toggle("on", enabled);
-    sw.setAttribute("aria-pressed", String(enabled));
-  }
-
-  const bar = $("modelBar"), fill = $("modelFill");
-  const dl = $("modelDownload"), cancel = $("modelCancel"), rm = $("modelRemove");
-  $("modelSize").textContent = d.size ? fmtBytes(d.size) : "约 1.46 GB";
-
-  if (!d.engine_available) {
-    $("modelStatus").textContent =
-      "当前环境没装 faster-whisper，本地识别用不了（Docker 镜像不含它）；本机装好后刷新页面即可。";
-    dl.disabled = true; cancel.hidden = true; rm.hidden = !d.model_ready;
-    bar.hidden = !d.running;
-    if (d.running) fill.style.width = (d.percent || 0) + "%";
-    return;
-  }
-
-  if (d.running) {
-    $("modelStatus").textContent =
-      `下载中 ${(d.percent || 0).toFixed(1)}% · ${fmtBytes(d.downloaded)} / ${fmtBytes(d.total)}` +
-      (d.file ? ` · ${d.file}` : "");
-    bar.hidden = false;
-    fill.style.width = (d.percent || 0) + "%";
-    dl.disabled = true; cancel.hidden = false; rm.hidden = true;
-    startModelPoll();
-    return;
-  }
-
-  stopModelPoll();
-  bar.hidden = true; fill.style.width = "0%";
-  dl.disabled = false;
-  dl.textContent = d.model_ready ? "重新下载" : (d.active_model ? "下载 medium" : "下载模型");
-  cancel.hidden = true; rm.hidden = !d.model_ready;
-  if (d.error) {
-    $("modelStatus").textContent = "上次没下完：" + d.error;
-  } else if (d.model_ready) {
-    $("modelStatus").textContent = "已就绪（faster-whisper-medium），本地识别可用。";
-  } else if (d.active_model) {
-    $("modelStatus").textContent =
-      `已就绪（${d.active_model}，${fmtBytes(d.active_size)}）；想要更准可以再下 medium。`;
-  } else {
-    $("modelStatus").textContent = "未下载。下载完就能不联网识别。";
-  }
-}
-
-async function loadLocalModel() {
-  try {
-    const r = await fetch("/api/asr/local");
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    paintLocalModel(await r.json());
-  } catch (e) {
-    $("modelStatus").textContent = "查不到本地模型状态（服务没起？）";
-    stopModelPoll();
-  }
 }
 
 /* ---------- 卡片背景 ----------
@@ -3316,7 +3187,6 @@ $("settingsBtn").addEventListener("click", () => {
   blurComposer();
   $("settingsMask").hidden = false;
   loadSettings();
-  loadLocalModel();
 });
 $("settingsClose").addEventListener("click", () => { $("settingsMask").hidden = true; });
 
@@ -3356,24 +3226,7 @@ $("settingsMask").addEventListener("click", (e) => {
   settingsDown = false;
 });
 
-$("asrSeg").addEventListener("click", async (e) => {
-  const btn = e.target.closest("button[data-v]");
-  if (!btn) return;
-  asrSetting = btn.dataset.v;
-  paintSettings();                       // 先切界面，不等网络
-  if (asrSetting !== "cloud") loadLocalModel();
-  try {
-    const r = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ asr_backend: asrSetting }),
-    });
-    const d = await r.json();
-    if (r.ok) { asrSetting = d.asr_backend; paintSettings(d.has_key); }
-  } catch (err) {}
-});
-
-/* ---------- 没配 key 的提醒 / 本地模型 ---------- */
+/* ---------- 没配 key 的提醒 ---------- */
 $("keyBannerClose").addEventListener("click", () => {
   localStorage.setItem("bill_key_banner_dismissed", "1");
   $("keyBanner").hidden = true;
@@ -3381,58 +3234,6 @@ $("keyBannerClose").addEventListener("click", () => {
 
 $("keyBannerGo").addEventListener("click", () => {
   openSettingsPane("model");
-  const cloud = document.querySelector('#asrSeg button[data-v="cloud"]');
-  if (cloud) cloud.click();        // key 在「云端模型」那一栏里
-});
-
-$("localAsrSwitch").addEventListener("click", async () => {
-  const next = !$("localAsrSwitch").classList.contains("on");
-  $("localAsrSwitch").classList.toggle("on", next);
-  $("localAsrSwitch").setAttribute("aria-pressed", String(next));
-  try {
-    const r = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ local_asr: next }),
-    });
-    if (!r.ok) throw new Error();
-  } catch (e) {
-    $("localAsrSwitch").classList.toggle("on", !next);
-    $("localAsrSwitch").setAttribute("aria-pressed", String(!next));
-    hint("这个开关没存上，再试一次", true);
-  }
-});
-
-$("modelDownload").addEventListener("click", async () => {
-  $("modelDownload").disabled = true;
-  $("modelStatus").textContent = "正在准备下载…";
-  try {
-    const r = await fetch("/api/asr/local/download", { method: "POST" });
-    const d = await r.json();
-    if (!r.ok) {
-      $("modelStatus").textContent = d.detail || "下载没启动";
-      $("modelDownload").disabled = false;
-      return;
-    }
-    paintLocalModel(d);
-  } catch (e) {
-    $("modelStatus").textContent = "下载没启动：" + e.message;
-    $("modelDownload").disabled = false;
-  }
-});
-
-$("modelCancel").addEventListener("click", async () => {
-  await fetch("/api/asr/local/cancel", { method: "POST" });
-  loadLocalModel();
-});
-
-$("modelRemove").addEventListener("click", async () => {
-  const yes = await askConfirm("删掉本地模型？下次用要重新下（约 1.5 GB）。", "删除模型", 0);
-  if (!yes) return;
-  const r = await fetch("/api/asr/local", { method: "DELETE" });
-  const d = await r.json();
-  if (!r.ok) { $("modelStatus").textContent = d.detail || "删除失败"; return; }
-  paintLocalModel(d);
 });
 
 $("keySave").addEventListener("click", async () => {
@@ -3451,7 +3252,6 @@ $("keySave").addEventListener("click", async () => {
       return;
     }
     $("keyInput").value = "";             // 存完就清掉，界面上永远看不到明文
-    asrSetting = d.asr_backend;
     keyHintCache = d.key_hint || "";
     hasUiKeyCache = true;                 // 刚存过，重置按钮该出来了
     paintSettings(d.has_key);
@@ -3468,7 +3268,7 @@ $("keySave").addEventListener("click", async () => {
 $("keyReset").addEventListener("click", async () => {
   const yes = await askConfirm(
     "清掉页面上配置的 API Key？清掉之后会回落到 .env 里的那份；如果那边也没有，"
-    + "语音和模型兜底就用不了了，只剩规则解析。", "重置密钥", 0);
+    + "语音和小票 OCR 就用不了了，只剩规则解析。", "重置密钥", 0);
   if (!yes) return;
 
   $("keyReset").disabled = true;
@@ -3480,7 +3280,6 @@ $("keyReset").addEventListener("click", async () => {
     });
     const d = await r.json();
     if (!r.ok) { toast("没清掉：" + detailMsg(d), false); return; }
-    asrSetting = d.asr_backend;
     keyHintCache = d.key_hint || "";
     hasUiKeyCache = d.has_ui_key === true;
     paintSettings(d.has_key);

@@ -57,8 +57,6 @@
   [x] 柱状图修复：--trend-bar 从来没定义过，柱子一直是透明的
   [x] Excel 导入：.xlsx / .xlsm，标准库解 zip+XML（不引 openpyxl），日期格式也认
   [x] 上手引导：没账时首页三张卡（说一句 / 拍小票 / 导账单）+ 设置里一页「使用说明」
-  [x] 本地模型：设置里从 ModelScope 下 faster-whisper-medium（1.46 GB，进度 + 断点续传），
-      「语音识别」开关默认开；缺 faster-whisper 时给明确提示，不再抛 ModuleNotFoundError
   [x] 导入勾选：预览表带勾选框 + 筛选框（商户/类别/金额）+ 全选 / 反选 / 取消选择，
       提交只发勾中的行；老的 .xls 会提示另存
 
@@ -165,7 +163,7 @@
     [ ] 答辩 PPT —— 队友在做，见 HANDOFF_PPT.md
 
   工程与自检
-    [x] 测试进仓库 —— tests/ 下 7 个模块、53 个用例，标准库 unittest：
+    [x] 测试进仓库 —— tests/ 下 6 个模块、44 个用例，标准库 unittest：
         `python -m unittest discover -s tests -v`；不联网、不碰 data/app.db。
         覆盖解析 / 查账 / 预算 / 导入 / OCR 校验 / 接口层校验
 

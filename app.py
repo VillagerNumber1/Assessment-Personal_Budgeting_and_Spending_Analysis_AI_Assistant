@@ -24,7 +24,6 @@ import asr
 import audio_effectsRecovery as audio_fx
 import importer
 import llm
-import local_model
 import parser
 import query
 import receipt
@@ -114,8 +113,6 @@ class QueryRequest(BaseModel):
 
 
 class SettingsBody(BaseModel):
-    asr_backend: str | None = None
-    local_asr: bool | None = None       # 本地语音识别开关
     api_key: str | None = None          # 传空字符串 = 清空；不传 = 不改
     live2d: bool | None = None
     theme: str | None = None
@@ -151,11 +148,10 @@ def current_key() -> str:
 
 
 def get_transcriber():
-    """第一次用到时再初始化；换后端或换 key 时会被重置，下一次识别就用新的。"""
+    """第一次用到时再初始化；换 key 时会被重置，下一次识别就用新的。"""
     global _transcriber
     if _transcriber is None:
-        _transcriber = asr.create_transcriber(runtime.asr_backend(), current_key() or None,
-                                              local_enabled=runtime.local_asr())
+        _transcriber = asr.create_transcriber(current_key() or None)
     return _transcriber
 
 
@@ -256,7 +252,6 @@ def _settings_payload() -> dict:
     # 否则「重置」按下去什么也没变（还回落到 .env 那份），会让人以为没生效
     data["has_ui_key"] = bool(runtime.api_key())
     data["has_background"] = _background_file() is not None
-    data["local_asr"] = runtime.local_asr()
     # 默认预算的真相在 budget_defaults 表里（分段存），settings.json 里那个字段只是历史残留，
     # 这里用「当前月生效的那个数」盖掉它，前端拿到的永远是现在真正在用的值
     current = storage.get_default_budget(date.today().strftime("%Y-%m"))
@@ -273,16 +268,12 @@ def read_settings() -> dict:
 @app.post("/api/settings")
 def write_settings(body: SettingsBody) -> dict:
     """改设置。改完立刻重置识别器，下一次录音就用新的，不用重启。"""
-    if body.asr_backend not in (None, "local", "cloud", "auto"):
-        raise HTTPException(status_code=400, detail="asr_backend 只能是 local / cloud / auto")
     if body.api_key is not None and len(body.api_key) > 200:
         raise HTTPException(status_code=400, detail="key 太长了")
     if body.theme not in (None, "light", "dark", "auto"):
         raise HTTPException(status_code=400, detail="theme 只能是 light / dark / auto")
 
     updates: dict = {
-        "asr_backend": body.asr_backend,
-        "local_asr": body.local_asr,
         "live2d": body.live2d,
         "theme": body.theme,
     }
@@ -798,38 +789,7 @@ def delete_query(query_id: int) -> dict:
     return {"ok": True}
 
 
-# ---------- 本地语音模型（ModelScope 下载） ----------
-
-@app.get("/api/asr/local")
-def asr_local_status() -> dict:
-    """本地模型状态：装没装 faster-whisper、模型下没下、下载进度。"""
-    return {"ok": True, "enabled": runtime.local_asr(), **local_model.status()}
-
-
-@app.post("/api/asr/local/download")
-def asr_local_download() -> dict:
-    """开始从 ModelScope 拉 faster-whisper-medium（后台线程，前端轮询进度）。"""
-    if not local_model.engine_available():
-        raise HTTPException(
-            status_code=400,
-            detail="当前环境没装 faster-whisper，下载了也没法推理；Docker 镜像不含它，请在本机安装后再试")
-    return {"ok": True, **local_model.start_download()}
-
-
-@app.post("/api/asr/local/cancel")
-def asr_local_cancel() -> dict:
-    return {"ok": True, **local_model.cancel_download()}
-
-
-@app.delete("/api/asr/local")
-def asr_local_remove() -> dict:
-    """删掉已下载的模型（1.5 GB，换机器/清理磁盘时用）。"""
-    try:
-        local_model.remove_model()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, **local_model.status()}
-
+# ---------- 语音识别 ----------
 
 @app.post("/api/transcribe")
 async def transcribe(file: UploadFile = File(...)) -> dict:

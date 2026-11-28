@@ -1,18 +1,16 @@
 """语音识别组件：把一段 wav 变成一句话。
 
-现在只有本地 whisper 一种实现。以后要加云端（DeepSeek /v1/tools/asr）时，
-照着 Transcriber 的接口再写一个类，界面那边只改「创建哪一行」。
+只剩云端一种实现（DeepSeek `/v1/tools/asr`）。本地 whisper 在 2026-11-28 拆掉了：
+模型 1.5 GB、Docker 镜像装不下、还要维护下载器，收益不值当。
+没配 key 时就明确报「未配置 API Key」，不再回退到本地。
 
-    from asr import LocalWhisper, CloudASR
-    self.transcriber = LocalWhisper(MODEL_DIR)      # 现在
-    self.transcriber = CloudASR(api_key=...)        # 以后，一行之差
+    接口限制：16 位 PCM WAV 或 Ogg Opus，最大 8 MiB，最长 120 秒。
+    我们录的是 16 kHz 单声道 PCM16、60 秒封顶，天然满足。
+    计费按音频时长：0.78 元/小时（限时 5 折）。
 """
 from pathlib import Path
 
-import numpy as np
-import soundfile as sf
-
-from config import ASR_BACKEND, DEEPSEEK_API_KEY, SAMPLE_RATE
+from config import DEEPSEEK_API_KEY
 
 # whisper 的中文输出经常是繁体（小模型尤其明显），装了 opencc 就顺手转成简体。
 # 没装也不影响运行，只是可能拿到「計程車」这种结果。
@@ -21,16 +19,6 @@ try:
     _T2S = opencc.OpenCC("t2s")
 except Exception:
     _T2S = None
-
-
-def to_16k(audio: np.ndarray, sr: int) -> np.ndarray:
-    """重采样到 16 kHz。我们自己的录音本来就是 16k，这里只是兜底。"""
-    if sr == SAMPLE_RATE:
-        return audio.astype(np.float32)
-    n = int(len(audio) * SAMPLE_RATE / sr)
-    old = np.linspace(0, 1, len(audio), endpoint=False)
-    new = np.linspace(0, 1, n, endpoint=False)
-    return np.interp(new, old, audio).astype(np.float32)
 
 
 class Transcriber:
@@ -42,74 +30,8 @@ class Transcriber:
         raise NotImplementedError("子类必须实现 transcribe()")
 
 
-class LocalWhisper(Transcriber):
-    """本地 faster-whisper。第一次识别时加载模型，之后常驻内存。"""
-
-    name = "本地 whisper"
-
-    def __init__(self, model_dir: Path | None = None, compute_type: str = "int8") -> None:
-        self.model_dir = model_dir
-        self.compute_type = compute_type
-        self._model = None
-
-    def _resolve_dir(self) -> Path:
-        if self.model_dir is not None:
-            return self.model_dir
-        import local_model                       # 延迟 import，避免循环依赖
-        found = local_model.best_model_dir()
-        if found is None:
-            raise RuntimeError(
-                "还没有本地模型。打开「设置 → 模型 → 本地模型」点「下载模型」"
-                "（从 ModelScope 拉 faster-whisper-medium，约 1.5 GB）")
-        return found
-
-    def load(self):
-        if self._model is None:
-            try:
-                from faster_whisper import WhisperModel   # 延迟 import，启动快一点
-            except ImportError as exc:
-                raise RuntimeError(
-                    "当前环境没装 faster-whisper，本地识别用不了。"
-                    "Docker 镜像里没有它（容器里请用云端识别）；本机可以 pip install faster-whisper") from exc
-            self._model = WhisperModel(str(self._resolve_dir()),
-                                       device="cpu", compute_type=self.compute_type)
-        return self._model
-
-    def transcribe(self, wav: Path, language: str | None = "zh") -> str:
-        model = self.load()
-        # 用 soundfile 读成数组再喂模型，绕开 faster-whisper 内部的 PyAV 解码：
-        # 新版 PyAV(19) 去掉了 metadata_errors 参数，1.2.1 还在传，会直接报错。
-        audio, sr = sf.read(str(wav), dtype="float32")
-        if audio.ndim > 1:                 # 双声道就混成单声道
-            audio = audio.mean(axis=1)
-        audio = to_16k(audio, sr)
-
-        segments, _info = model.transcribe(
-            audio, language=language, beam_size=5, vad_filter=True,
-            initial_prompt="以下是普通话的句子，可能包含金额、日期和地点。",
-        )
-
-        # whisper 在静音/噪声上会「编」出「感谢观看」「谢谢」这类句子。
-        # no_speech_prob 是模型自己给的「这段是不是人声」概率，用它挡掉。
-        # avg_logprob 太低说明模型自己也没把握，一起挡——但阈值不能太严：
-        # 实测 1~2 秒的短句经常只有 -1.4，放宽到 -1.5 才不会误杀真话。
-        parts: list[str] = []
-        for seg in segments:
-            if seg.no_speech_prob > 0.6 or seg.avg_logprob < -1.5:
-                continue
-            parts.append(seg.text)
-
-        text = "".join(parts).strip()
-        return _T2S.convert(text) if _T2S is not None else text
-
-
 class CloudASR(Transcriber):
-    """DeepSeek 在线识别：POST /v1/tools/asr，multipart 上传一段 wav。
-
-    接口限制：16 位 PCM WAV 或 Ogg Opus，最大 8 MiB，最长 120 秒。
-    我们录的是 16 kHz 单声道 PCM16、60 秒封顶，天然满足。
-    计费按音频时长：0.78 元/小时（限时 5 折）。
-    """
+    """DeepSeek 在线识别：POST /v1/tools/asr，multipart 上传一段 wav。"""
 
     name = "DeepSeek 云端"
     endpoint = "https://api.deepseek.com/v1/tools/asr"
@@ -118,8 +40,8 @@ class CloudASR(Transcriber):
         self.api_key = (api_key if api_key is not None else DEEPSEEK_API_KEY).strip()
         if not self.api_key:
             raise RuntimeError(
-                "没有配置 API key：把 DEEPSEEK_API_KEY 写进项目根目录的 .env"
-                "（可以先复制 .env.example）")
+                "没有配置 API Key：语音识别要用 DeepSeek 云端，"
+                "在「设置 → 模型」里填 key（或写进项目根目录的 .env）")
 
     def transcribe(self, wav: Path, language: str | None = "zh") -> str:
         import requests                      # 只有走云端才需要它
@@ -138,24 +60,6 @@ class CloudASR(Transcriber):
         return _T2S.convert(text) if _T2S is not None else text
 
 
-def create_transcriber(backend: str = ASR_BACKEND,
-                       api_key: str | None = None,
-                       local_enabled: bool = True) -> Transcriber:
-    """按配置挑一个识别器，界面只需要调这个函数。
-
-    local_enabled 来自设置里的「本地语音识别」开关：
-        关掉之后，local 和「没 key 的 auto」都直接报错，提示去装/开云端。
-    api_key 传 None 表示"用 .env 里的"；传具体值则优先用它（设置面板填的 key）。
-    """
-    key = api_key if api_key is not None else DEEPSEEK_API_KEY
-    if backend == "local":
-        if not local_enabled:
-            raise RuntimeError("本地语音识别已关掉（设置 → 模型），可以切到云端或重新打开")
-        return LocalWhisper()
-    if backend == "cloud":
-        return CloudASR(key)
-    if key:
-        return CloudASR(key)
-    if not local_enabled:
-        raise RuntimeError("没有配置 API Key，本地语音识别又关着，语音暂时用不了")
-    return LocalWhisper()
+def create_transcriber(api_key: str | None = None) -> Transcriber:
+    """固定用云端。api_key 传 None 表示用 .env 里的。"""
+    return CloudASR(api_key if api_key is not None else DEEPSEEK_API_KEY)

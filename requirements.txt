@@ -10,12 +10,6 @@
 sounddevice==0.5.6
 soundfile==0.14.0
 numpy==2.5.5
-faster-whisper==1.2.1
-
-# faster-whisper 依赖 av 解码音频。注意：av 19 删掉了 metadata_errors 参数，
-# 而 faster-whisper 1.2.1 还在传，用文件路径直接转写会崩。
-# 我们的做法是用 soundfile 读成数组再喂模型，绕开这条路径（见 gui.py）。
-av==19.0.2
 
 # 修正 whisper 中文常见的繁体输出（t2s = 繁体转简体）
 opencc-python-reimplemented
