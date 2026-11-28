@@ -83,12 +83,13 @@ def parse_time(q: str, today: date) -> tuple[date, date, str]:
     m = re.search(r"(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]", q)
     if m:
         month, day = int(m.group(1)), int(m.group(2))
-        try:
-            one = date(today.year, month, day)
-        except ValueError:
-            one = None
+        one = _one_day(today.year, month, day)
         if one:
             return one, one, f"{month}月{day}日"
+        # 写了个不存在的日期（2 月 30 日）：不能退到「当月 30 号」去编一个日期，
+        # 退回「这个月」，至少不会答成另一个日子
+        start, end = _month_range(today.year, today.month)
+        return start, end, "这个月"
 
     # 只写了「25日 / 25号」：按**当年当月**算（用户 2026-11-26 定的规矩）
     m = re.search(r"(?<!\d)(\d{1,2})\s*[日号]", q)

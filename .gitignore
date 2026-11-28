@@ -34,3 +34,4 @@ HANDOFF_LIVE2D.md
 Thumbs.db
 .DS_Store
 *.log
+.test-tmp/
