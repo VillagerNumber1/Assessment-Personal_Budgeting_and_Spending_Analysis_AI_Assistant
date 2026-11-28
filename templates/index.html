@@ -254,6 +254,30 @@
   .meta > span { text-align:right; }
   .edit { border:0; background:none; color:var(--accent); font-size:12px; cursor:pointer; padding:0 4px; }
   .empty { color:var(--muted); text-align:center; padding:32px 0; }
+
+  /* 空状态引导：新用户没账时看到的三张卡（点了就直接走对应流程） */
+  .empty-guide { background:transparent; box-shadow:none; padding:18px 4px 10px; }
+  .eg-title { font-size:15px; color:var(--ink-2); font-weight:600; margin:0 0 14px; }
+  .eg-cards { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; }
+  .eg-card { display:flex; flex-direction:column; align-items:flex-start; gap:5px;
+             padding:14px 14px 12px; border:1px solid var(--line); border-radius:12px;
+             background:var(--card); cursor:pointer; text-align:left; font-family:inherit;
+             transition:border-color .15s, transform .15s; }
+  .eg-card:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .eg-card svg { color:var(--accent); }
+  .eg-card b { font-size:14px; color:var(--ink); font-weight:600; }
+  .eg-card small { font-size:12px; color:var(--muted); line-height:1.45; }
+  .eg-foot { margin-top:10px; font-size:12px; color:var(--muted); }
+  .eg-link { border:0; background:none; padding:0; color:var(--accent-ink); cursor:pointer;
+             font-size:12px; font-family:inherit; }
+  @media (max-width: 560px) { .eg-cards { grid-template-columns:1fr; } }
+
+  /* 设置里的「使用说明」：内容多，限高滚动（小屏按视口高度收），别把弹窗撑出屏幕 */
+  #pane-guide { max-height:min(500px, 58vh); overflow:auto; }
+  .guide-h { margin:14px 0 3px; font-size:13px; color:var(--ink-2); font-weight:600; }
+  .guide-p { margin:2px 0; font-size:12px; color:var(--muted); line-height:1.65; }
+  .guide-p code { background:var(--fill); color:var(--ink-2); border-radius:6px;
+                  padding:1px 5px; font-family:inherit; }
   /* 本月 vs 上月的结论：这是「提示」的数据版，看板娘关掉也照样显示 */
   .spend-note { font-size:12px; color:var(--muted); margin:-4px 0 10px; padding-left:0; }
   .spend-note.up { color:var(--amber-ink); }
@@ -870,6 +894,15 @@
           </svg>
           历史记录
         </button>
+        <button type="button" class="nav" data-pane="guide">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="8.5"/>
+            <path d="M9.6 9.2a2.5 2.5 0 0 1 4.9.7c0 1.5-2.4 1.7-2.4 3.1"/>
+            <circle cx="12" cy="17" r=".9" fill="currentColor" stroke="none"/>
+          </svg>
+          使用说明
+        </button>
       </nav>
 
       <div class="panes">
@@ -976,6 +1009,34 @@
         <section class="pane" id="pane-history" hidden>
           <div class="ops-note">* 做过的事和问过的话都在这里。查过的句子点「查询」可以重查一次。</div>
           <ul class="ops" id="opsList"><li class="muted">加载中…</li></ul>
+        </section>
+
+        <section class="pane" id="pane-guide" hidden>
+          <p class="ops-note">* 30 秒上手。记不住也没关系，随时回来翻。</p>
+
+          <div class="guide-h">一句话记账</div>
+          <p class="guide-p"><code>昨天打车32</code>、<code>午饭25</code> 直接记；
+            <code>22点打车32</code> 会带上时刻。回车提交，Shift+回车换行。</p>
+          <p class="guide-p"><code>四个舍友aa 15.6</code> 自动按 4 人平摊；除不尽会弹框让你确认。</p>
+          <p class="guide-p">「最近」「上周」这种说不清日期的会被拦下，不替你编日期。</p>
+
+          <div class="guide-h">问账</div>
+          <p class="guide-p"><code>上个月吃饭花了多少</code>、<code>这个月还剩下多少</code>；
+            问具体某天（<code>10月1日花了多少</code>）会把卡片和流水翻到那天。</p>
+
+          <div class="guide-h">小票 / 截图</div>
+          <p class="guide-p">点聊天框左下角的回形针，或把图拖进去；读出金额后要你确认才入库，
+            读不出会直接说「没读懂」。</p>
+
+          <div class="guide-h">导入账单</div>
+          <p class="guide-p">微信 / 支付宝的 CSV、Excel 都行；先预览，可筛选勾选，重复的自动跳过。</p>
+
+          <div class="guide-h">预算</div>
+          <p class="guide-p">卡片右栏设置；花到 85% 转黄、95% 转红，超支直接写「超支 ¥xxx」。</p>
+
+          <div class="guide-h">数据在哪</div>
+          <p class="guide-p">都在本机 <code>data/app.db</code>；删除是软删除，可在「历史记录」里撤销，
+            保留 66 天。</p>
         </section>
       </div>
     </div>
@@ -1424,10 +1485,60 @@ async function loadList(p) {
 
   $("list").innerHTML = d.items.length
     ? d.items.map(renderItem).join("")
-    : '<div class="empty">还没有记录，上面说一句试试</div>';
+    : `<li class="empty-guide">
+        <div class="eg-title">还没有账目，挑一种开始</div>
+        <div class="eg-cards">
+          <button type="button" class="eg-card" data-eg="text">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 5h16v11H9l-5 4V5Z"/>
+              <path d="M8 9.5h8M8 12.5h5"/>
+            </svg>
+            <b>说一句话</b><small>昨天打车32</small>
+          </button>
+          <button type="button" class="eg-card" data-eg="image">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 3.5h12v17l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5v-17Z"/>
+              <path d="M9 8h6M9 11.5h6"/>
+            </svg>
+            <b>拍张小票</b><small>便利店 / 外卖小票</small>
+          </button>
+          <button type="button" class="eg-card" data-eg="import">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3.5v10"/><path d="m8 9.5 4 4 4-4"/>
+              <path d="M4.5 16.5v2A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5v-2"/>
+            </svg>
+            <b>导份账单</b><small>微信 / 支付宝 CSV、Excel</small>
+          </button>
+        </div>
+        <div class="eg-foot">第一次来？<button type="button" class="eg-link"
+              data-eg="guide">看看使用说明</button></div>
+      </li>`;
   renderPager(pages);
   if (changed) scrollToList();    // 首次加载不滚，翻页/回退才滚
 }
+
+/* ---------- 空状态引导 ----------
+   三张卡直接把人带去对应流程；「使用说明」复用设置里的那一栏，不另做弹窗（弹窗会挡测试）。 */
+function openSettingsPane(pane) {
+  blurComposer();
+  $("settingsMask").hidden = false;
+  loadSettings();
+  const nav = document.querySelector(`#settingsNav button[data-pane="${pane}"]`);
+  if (nav) nav.click();
+}
+
+$("list").addEventListener("click", (e) => {
+  const card = e.target.closest("[data-eg]");
+  if (!card) return;
+  const what = card.dataset.eg;
+  if (what === "text") $("text").focus();
+  else if (what === "image") $("attachFile").click();
+  else if (what === "import") openImport();
+  else if (what === "guide") openSettingsPane("guide");
+});
 
 /* ---------- 卡片看的是哪个月 ----------
    viewMonth 决定卡片和统计显示哪个月；流水列表不受影响（它本来就是全量账本）。 */
@@ -1460,6 +1571,8 @@ async function load() {
   renderCard(d);
   await loadList(page);
   await loadStats();
+  // 一条账都没有的时候，空统计面板只会把新手引导挤到屏幕外——先收起来
+  $("statsPanel").hidden = totalCount === 0;
 }
 
 /* 顶部卡片：支出大字 + 预算 / 收入 / 结余。数字全部来自后端 SQL，这里只负责摆。 */
